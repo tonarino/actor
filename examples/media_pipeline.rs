@@ -494,10 +494,10 @@ fn main() -> Result<(), Error> {
     audio_capture_addr.send(AudioCaptureMessage::Capture)?;
     video_capture_addr.send(VideoCaptureMessage::Capture)?;
 
+    // The display actor may spawn an OS window which in some cases must run
+    // on the main application thread.
     let display_actor = VideoDisplayActor::new();
-    system
-        .run_on_main(display_actor, display_addr)
-        .expect("I was too lazy to convert a failure::Error to an anyhow::Error");
+    system.run_on_main(display_actor, display_addr)?;
 
     Ok(())
 }
