@@ -9,3 +9,7 @@ crossbeam = "0.7"
 failure = "0.1"
 log = "0.4"
 parking_lot = "0.11"
+
+[dev-dependencies]
+simple_logger = "1.11"
+ctrlc = "3.1"
