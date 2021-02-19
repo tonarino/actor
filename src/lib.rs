@@ -515,7 +515,7 @@ pub enum Control {
 }
 
 /// The base actor trait.
-pub trait Actor {
+pub trait Actor: std::marker::Sized {
     /// The expected type of a message to be received.
     type Message;
     /// The type to return on error in the handle method.
@@ -526,34 +526,21 @@ pub trait Actor {
         &mut self,
         context: &Context<Self>,
         message: Self::Message,
-    ) -> Result<(), Self::Error>
-    where
-        Self: Sized;
+    ) -> Result<(), Self::Error>;
 
     /// The name of the Actor - used only for logging/metrics/debugging.
     fn name() -> &'static str;
 
     /// An optional callback when the Actor has been started.
-    fn started(&mut self, _context: &Context<Self>)
-    where
-        Self: std::marker::Sized,
-    {
-    }
+    fn started(&mut self, _context: &Context<Self>) {}
 
     /// An optional callback when the Actor has been stopped.
-    fn stopped(&mut self, _context: &Context<Self>)
-    where
-        Self: std::marker::Sized,
-    {
-    }
+    fn stopped(&mut self, _context: &Context<Self>) {}
 
     /// An optional callback when the Actor has returned an error on handle.
     /// The default implementation shuts down the entire system. Actors
     /// supporting a recovery mechanism should override this function.
-    fn errored(&mut self, context: &Context<Self>, error: Self::Error) -> ErroredResult
-    where
-        Self: Sized,
-    {
+    fn errored(&mut self, context: &Context<Self>, error: Self::Error) -> ErroredResult {
         error!("{} error: {:?}", Self::name(), error);
         let _ = context.system_handle.shutdown();
 
