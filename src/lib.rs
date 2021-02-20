@@ -115,7 +115,7 @@ pub struct SystemHandle {
 /// An execution context for a specific actor. Specifically, this is useful for managing
 /// the lifecycle of itself (through the `myself` field) and other actors via the `SystemHandle`
 /// provided.
-pub struct Context<A: Actor> {
+pub struct Context<A: Actor + ?Sized> {
     pub system_handle: SystemHandle,
     pub myself: Addr<A>,
 }
@@ -526,34 +526,21 @@ pub trait Actor {
         &mut self,
         context: &Context<Self>,
         message: Self::Message,
-    ) -> Result<(), Self::Error>
-    where
-        Self: Sized;
+    ) -> Result<(), Self::Error>;
 
     /// The name of the Actor - used only for logging/metrics/debugging.
     fn name() -> &'static str;
 
     /// An optional callback when the Actor has been started.
-    fn started(&mut self, _context: &Context<Self>)
-    where
-        Self: std::marker::Sized,
-    {
-    }
+    fn started(&mut self, _context: &Context<Self>) {}
 
     /// An optional callback when the Actor has been stopped.
-    fn stopped(&mut self, _context: &Context<Self>)
-    where
-        Self: std::marker::Sized,
-    {
-    }
+    fn stopped(&mut self, _context: &Context<Self>) {}
 
     /// An optional callback when the Actor has returned an error on handle.
     /// The default implementation shuts down the entire system. Actors
     /// supporting a recovery mechanism should override this function.
-    fn errored(&mut self, context: &Context<Self>, error: Self::Error) -> ErroredResult
-    where
-        Self: Sized,
-    {
+    fn errored(&mut self, context: &Context<Self>, error: Self::Error) -> ErroredResult {
         error!("{} error: {:?}", Self::name(), error);
         let _ = context.system_handle.shutdown();
 
@@ -608,7 +595,7 @@ impl AtomicCounter {
     }
 }
 
-pub struct Addr<A: Actor> {
+pub struct Addr<A: Actor + ?Sized> {
     recipient: Recipient<A::Message>,
     message_rx: Receiver<A::Message>,
     control_rx: Receiver<Control>,
