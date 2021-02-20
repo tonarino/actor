@@ -676,6 +676,8 @@ pub struct Recipient<M> {
     messages_overflown: Arc<AtomicCounter>,
 }
 
+// #[derive(Clone)] adds Clone bound to M, which is not necessary.
+// https://github.com/rust-lang/rust/issues/26925
 impl<M> Clone for Recipient<M> {
     fn clone(&self) -> Self {
         Self {
