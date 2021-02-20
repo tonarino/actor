@@ -148,7 +148,6 @@ where
     pub fn spawn<A>(&mut self, actor: A) -> Result<Addr<A>, Error>
     where
         A: Actor + Send + 'static,
-        A::Message: Send + 'static,
     {
         self.spawn_fn(move || actor)
     }
@@ -157,7 +156,6 @@ where
     pub fn spawn_with_capacity<A>(&mut self, actor: A, capacity: usize) -> Result<Addr<A>, Error>
     where
         A: Actor + Send + 'static,
-        A::Message: Send + 'static,
     {
         self.spawn_fn_with_capacity(move || actor, capacity)
     }
@@ -169,7 +167,6 @@ where
     where
         F: FnOnce() -> A + Send + 'static,
         A: Actor + 'static,
-        A::Message: Send + 'static,
     {
         self.spawn_fn_with_capacity(factory, MAX_CHANNEL_BLOAT)
     }
@@ -185,7 +182,6 @@ where
     where
         F: FnOnce() -> A + Send + 'static,
         A: Actor + 'static,
-        A::Message: Send + 'static,
     {
         let addr = Addr::<A>::with_capacity(capacity);
         self.spawn_fn_with_addr(factory, addr.clone())?;
@@ -199,7 +195,6 @@ where
     where
         F: FnOnce() -> A + Send + 'static,
         A: Actor + 'static,
-        A::Message: Send + 'static,
     {
         // Hold the lock until the end of the function to prevent the race
         // condition between spawn and shutdown.
@@ -517,7 +512,7 @@ pub enum Control {
 /// The base actor trait.
 pub trait Actor {
     /// The expected type of a message to be received.
-    type Message;
+    type Message: Send;
     /// The type to return on error in the handle method.
     type Error: std::fmt::Debug;
 
