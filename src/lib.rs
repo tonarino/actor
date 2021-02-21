@@ -144,7 +144,7 @@ where
         self.metrics_handler = Some(metrics_handler);
     }
 
-    /// Spawn a normal Actor in the system, using a factory that produces a `Actor`.
+    /// Spawn a normal [`Actor`] in the system.
     pub fn spawn<A>(&mut self, actor: A) -> Result<Addr<A>, Error>
     where
         A: Actor + Send + 'static,
@@ -152,7 +152,7 @@ where
         self.spawn_fn(move || actor)
     }
 
-    /// Spawn a normal Actor in the system, using a factory that produces a `Actor`.
+    /// Spawn a normal [`Actor`] in the system, with non-default capacity for its input channel.
     pub fn spawn_with_capacity<A>(&mut self, actor: A, capacity: usize) -> Result<Addr<A>, Error>
     where
         A: Actor + Send + 'static,
@@ -160,9 +160,10 @@ where
         self.spawn_fn_with_capacity(move || actor, capacity)
     }
 
-    /// Spawn a normal Actor in the system, using a factory that produces an `Actor`.
-    /// This method is useful if your actor does not implement `Send`, since it can create the struct
-    /// directly within the thread.
+    /// Spawn a normal Actor in the system, using a factory that produces an [`Actor`].
+    ///
+    /// This method is useful if your actor does not implement [`Send`], since it can create
+    /// the struct directly within the thread.
     pub fn spawn_fn<F, A>(&mut self, factory: F) -> Result<Addr<A>, Error>
     where
         F: FnOnce() -> A + Send + 'static,
@@ -171,9 +172,8 @@ where
         self.spawn_fn_with_capacity(factory, MAX_CHANNEL_BLOAT)
     }
 
-    /// Spawn a normal Actor in the system, using a factory that produces an `Actor`.
-    /// This method is useful if your actor does not implement `Send`, since it can create the struct
-    /// directly within the thread.
+    /// Spawn a normal Actor in the system, using a factory that produces an [`Actor`],
+    /// with non-default capacity for its input channel. See [`System::spawn_fn()`].
     pub fn spawn_fn_with_capacity<F, A>(
         &mut self,
         factory: F,
@@ -188,9 +188,10 @@ where
         Ok(addr)
     }
 
-    /// Spawn a normal Actor in the system, using a factory that produces an
-    /// `Actor`, and an address that will be assigned to the `Actor`. This method
-    /// is useful if you need to model circular dependencies between `Actor`s.
+    /// Spawn a normal Actor in the system, using a factory that produces an [`Actor`],
+    /// and an address that will be assigned to the Actor.
+    ///
+    /// This method is useful if you need to model circular dependencies between `Actor`s.
     pub fn spawn_fn_with_addr<F, A>(&mut self, factory: F, addr: Addr<A>) -> Result<(), Error>
     where
         F: FnOnce() -> A + Send + 'static,
