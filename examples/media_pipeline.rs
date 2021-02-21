@@ -1,5 +1,6 @@
 use crate::actors::*;
 use actor::{Addr, System, SystemCallbacks};
+use env_logger::Env;
 use failure::Error;
 
 #[derive(Debug, Clone)]
@@ -444,7 +445,7 @@ impl actor::MetricsHandler for MetricsSender {
 }
 
 fn main() -> Result<(), Error> {
-    simple_logger::SimpleLogger::new().with_level(log::LevelFilter::Debug).init().unwrap();
+    env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
 
     let system_callbacks = SystemCallbacks {
         preshutdown: Some(Box::new(move || {
