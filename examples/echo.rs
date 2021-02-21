@@ -221,7 +221,8 @@ fn main() -> Result<(), Error> {
     let mut system = System::<NoopMetricsHandler>::new("Echo System");
 
     // Start creating actors. Because actors "point forward", start with the last one.
-    let output_addr = system.spawn(Output)?;
+    // Set larger message channel capacity for Output actor for some cushion.
+    let output_addr = system.spawn_with_capacity(Output, 60)?;
 
     // Create Mixer address explicitly in order to break the circular dependency loop.
     let mixer_addr = Addr::<Mixer>::default();
