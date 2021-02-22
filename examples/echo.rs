@@ -46,6 +46,10 @@ const DELAY_CHUNKS: usize = 60;
 /// Dummy trigger for [`Input`] to read next chunk.
 struct ReadNext;
 
+fn silence_chunk() -> Chunk {
+    Arc::new([[0i16; 2]; CHUNK_SAMPLES])
+}
+
 /// Actor to read and decode input stream (stdin) and produce sound chunks.
 struct Input {
     next: Recipient<MixerInput>,
@@ -120,8 +124,7 @@ struct Mixer {
 impl Mixer {
     fn new(out_1: Recipient<Chunk>, out_2: Recipient<Chunk>) -> Self {
         // Start with buffers filled, so that output is produced right for the first message.
-        let initial = Arc::new([[0i16; 2]; CHUNK_SAMPLES]);
-        Self { out_1, out_2, dry_buffer: Some(initial.clone()), wet_buffer: Some(initial) }
+        Self { out_1, out_2, dry_buffer: Some(silence_chunk()), wet_buffer: Some(silence_chunk()) }
     }
 }
 
@@ -168,8 +171,7 @@ struct Delay {
 
 impl Delay {
     fn new(next: Recipient<Chunk>) -> Self {
-        let buffer: Vec<Chunk> =
-            repeat(Arc::new([[0i16; 2]; CHUNK_SAMPLES])).take(DELAY_CHUNKS).collect();
+        let buffer: Vec<Chunk> = repeat(silence_chunk()).take(DELAY_CHUNKS).collect();
         Self { next, buffer, index: 0 }
     }
 }
