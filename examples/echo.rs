@@ -27,22 +27,23 @@ use std::{
     sync::Arc,
 };
 
-/// One audio sample is a pair of signed 16bit integers.
+/// One audio sample. Defaults of pacat are --format=s16ne (signed 16bit) and --chanels=2 (stereo).
 type Sample = [i16; 2];
 
-/// Number of bytes one encoded sample has.
-const SAMPLE_BYTES: usize = 4;
+/// Number of bytes one encoded sample has. This is same as the size of its memory representation.
+const SAMPLE_BYTES: usize = std::mem::size_of::<Sample>();
 
-/// Number of samples per chunk. 735 samples * 60 Hz = 44100 Hz audio
-const CHUNK_SAMPLES: usize = 735;
+/// Number of samples per chunk. pacat defaults to --rate=44100, let's go for 60 chunks per second.
+/// For best results, set --latency=<CHUNK_SAMPLES>*<SAMPLE_BYTES> for both parec and pacat.
+const CHUNK_SAMPLES: usize = 44100 / 60;
 
 /// A chunk of audio, an array of samples.
 type Chunk = Arc<[Sample; CHUNK_SAMPLES]>;
 
-/// Number of chunks the "Delay" actor (effect) has. 60 chunks is one second, adjust to liking.
+/// Number of chunks the "Delay" actor (effect) has.
 const DELAY_CHUNKS: usize = 60;
 
-/// Dummy trigger for [Input] to read next chunk.
+/// Dummy trigger for [`Input`] to read next chunk.
 struct ReadNext;
 
 /// Actor to read and decode input stream (stdin) and produce sound chunks.
@@ -64,7 +65,7 @@ impl Actor for Input {
         stdin().read_exact(&mut bytes)?;
         let chunk_slice: Arc<[Sample]> = bytes
             .chunks(SAMPLE_BYTES)
-            // default PulseAudio format is s16ne, siggned 16 bit native endian.
+            // default PulseAudio format is s16ne, signed 16 bit native endian.
             .map(|b| [i16::from_ne_bytes([b[0], b[1]]), i16::from_ne_bytes([b[2], b[3]])])
             .collect();
         let chunk: Chunk = chunk_slice.try_into().expect("sample count is correct");
