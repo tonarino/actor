@@ -1,7 +1,8 @@
 [package]
 name = "actor"
 version = "0.2.0"
-authors = ["Jake McGinty <me@jake.su>"]
+authors = ["Jake McGinty <me@jake.su>", "Matěj Laitl <matej@laitl.com>"]
+license = "MIT"
 edition = "2018"
 
 [dependencies]
