@@ -745,14 +745,9 @@ impl<M> Recipient<M> {
 }
 
 /// An address to an actor that can *only* handle lifecycle control.
+#[derive(Clone)]
 pub struct ControlAddr {
     control_tx: Sender<Control>,
-}
-
-impl Clone for ControlAddr {
-    fn clone(&self) -> Self {
-        ControlAddr { control_tx: self.control_tx.clone() }
-    }
 }
 
 impl ControlAddr {
