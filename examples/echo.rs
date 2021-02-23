@@ -43,6 +43,26 @@ type Chunk = Arc<[Sample; CHUNK_SAMPLES]>;
 /// Number of chunks the "Delay" actor (effect) has.
 const DELAY_CHUNKS: usize = 60;
 
+/// A chunk of samples that represents the "dry" (original, authentic) signal.
+struct DryChunk(Chunk);
+
+/// A chunk of sample that represents the "wet" (processed, edited) signal.
+struct WetChunk(Chunk);
+
+/// DryChunk converts to (unspecified) Chunk (but not the other way around).
+impl From<DryChunk> for Chunk {
+    fn from(orig: DryChunk) -> Self {
+        orig.0
+    }
+}
+
+/// WetChunk converts to (unspecified) Chunk (but not the other way around).
+impl From<WetChunk> for Chunk {
+    fn from(orig: WetChunk) -> Self {
+        orig.0
+    }
+}
+
 /// Dummy trigger for [`Input`] to read next chunk.
 struct ReadNext;
 
@@ -50,12 +70,12 @@ fn silence_chunk() -> Chunk {
     Arc::new([[0i16; 2]; CHUNK_SAMPLES])
 }
 
-/// Actor to read and decode input stream (stdin) and produce sound chunks.
-struct Input {
-    next: Recipient<MixerInput>,
+/// Actor to read and decode input stream (stdin) and produce sound [`DryChunk`]s.
+struct Input<M> {
+    next: Recipient<M>,
 }
 
-impl Actor for Input {
+impl<M: From<DryChunk>> Actor for Input<M> {
     type Error = Error;
     type Message = ReadNext;
 
@@ -76,14 +96,14 @@ impl Actor for Input {
         trace!("[Input] decoded chunk: {:?}...", &chunk[..5]);
 
         // Send the parsed chunk to the next actor.
-        self.next.try_send(MixerInput::Dry(chunk))?;
+        self.next.try_send(DryChunk(chunk))?;
 
         // Trigger a loop to read the next chunk.
         context.myself.try_send(ReadNext).map_err(Error::from)
     }
 }
 
-/// Actor to encode and write sound chunks to output stream (stdout).
+/// Actor to encode and write sound chunks to output stream (stdout). Consumes [`Chunk`]s,
 struct Output;
 
 impl Actor for Output {
@@ -108,27 +128,45 @@ impl Actor for Output {
 /// A chunk that knows whether it is dry or wet.
 enum MixerInput {
     /// The original signal.
-    Dry(Chunk),
+    Dry(DryChunk),
     /// Signal from an effect.
-    Wet(Chunk),
+    Wet(WetChunk),
 }
 
-/// Audio mixer actor. Mixes 2 inputs (dry, wet) together, provides 2 equal outputs.
-struct Mixer {
-    out_1: Recipient<Chunk>,
-    out_2: Recipient<Chunk>,
-    dry_buffer: Option<Chunk>,
-    wet_buffer: Option<Chunk>,
-}
-
-impl Mixer {
-    fn new(out_1: Recipient<Chunk>, out_2: Recipient<Chunk>) -> Self {
-        // Start with buffers filled, so that output is produced right for the first message.
-        Self { out_1, out_2, dry_buffer: Some(silence_chunk()), wet_buffer: Some(silence_chunk()) }
+impl From<DryChunk> for MixerInput {
+    fn from(orig: DryChunk) -> Self {
+        Self::Dry(orig)
     }
 }
 
-impl Actor for Mixer {
+impl From<WetChunk> for MixerInput {
+    fn from(orig: WetChunk) -> Self {
+        Self::Wet(orig)
+    }
+}
+
+/// Audio mixer actor. Mixes 2 inputs (dry, wet) together, provides 2 equal outputs.
+/// Consumer either [`DryChunk`]s or [`WetChunk`]s and produces [`Chunk`]s.
+struct Mixer<M1, M2> {
+    out_1: Recipient<M1>,
+    out_2: Recipient<M2>,
+    dry_buffer: Option<DryChunk>,
+    wet_buffer: Option<WetChunk>,
+}
+
+impl<M1, M2> Mixer<M1, M2> {
+    fn new(out_1: Recipient<M1>, out_2: Recipient<M2>) -> Self {
+        // Start with buffers filled, so that output is produced right for the first message.
+        Self {
+            out_1,
+            out_2,
+            dry_buffer: Some(DryChunk(silence_chunk())),
+            wet_buffer: Some(WetChunk(silence_chunk())),
+        }
+    }
+}
+
+impl<M1: From<Chunk>, M2: From<Chunk>> Actor for Mixer<M1, M2> {
     type Error = Error;
     type Message = MixerInput;
 
@@ -146,8 +184,9 @@ impl Actor for Mixer {
         // if both buffers are full, mix them and send out.
         if let (Some(dry), Some(wet)) = (&self.dry_buffer, &self.wet_buffer) {
             let mixed_slice: Arc<[Sample]> = dry
+                .0
                 .iter()
-                .zip(wet.iter())
+                .zip(wet.0.iter())
                 .map(|(a, b)| [a[0].saturating_add(b[0]), a[1].saturating_add(b[1])])
                 .collect();
             let mixed: Chunk = mixed_slice.try_into().expect("sample count is correct");
@@ -163,20 +202,21 @@ impl Actor for Mixer {
 }
 
 /// Delay audio effect actor. Technically just a fixed circular buffer.
-struct Delay {
-    next: Recipient<Chunk>,
+/// Consumes [`Chunk`]s and produces [`WetChunk`]s.
+struct Delay<M> {
+    next: Recipient<M>,
     buffer: Vec<Chunk>,
     index: usize,
 }
 
-impl Delay {
-    fn new(next: Recipient<Chunk>) -> Self {
+impl<M> Delay<M> {
+    fn new(next: Recipient<M>) -> Self {
         let buffer: Vec<Chunk> = repeat(silence_chunk()).take(DELAY_CHUNKS).collect();
         Self { next, buffer, index: 0 }
     }
 }
 
-impl Actor for Delay {
+impl<M: From<WetChunk>> Actor for Delay<M> {
     type Error = Error;
     type Message = Chunk;
 
@@ -191,16 +231,16 @@ impl Actor for Delay {
         self.index = (self.index + 1) % self.buffer.len();
 
         // Send out the least recent chunk.
-        self.next.try_send(Arc::clone(&self.buffer[self.index])).map_err(Error::from)
+        self.next.try_send(WetChunk(Arc::clone(&self.buffer[self.index]))).map_err(Error::from)
     }
 }
 
-/// Audio damper actor. Attenuates audio level a bit.
-struct Damper {
-    next: Recipient<MixerInput>,
+/// Audio damper actor. Attenuates audio level a bit. Consumes [`Chunk`]s and produces [`WetChunk`]s.
+struct Damper<M> {
+    next: Recipient<M>,
 }
 
-impl Actor for Damper {
+impl<M: From<WetChunk>> Actor for Damper<M> {
     type Error = Error;
     type Message = Chunk;
 
@@ -214,7 +254,7 @@ impl Actor for Damper {
         let chunk: Chunk = chunk_slice.try_into().expect("sample count is correct");
 
         // Pass it right on.
-        self.next.try_send(MixerInput::Wet(chunk)).map_err(Error::from)
+        self.next.try_send(WetChunk(chunk)).map_err(Error::from)
     }
 }
 
