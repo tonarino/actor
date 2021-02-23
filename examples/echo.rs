@@ -12,9 +12,9 @@
 //!                      +---> Mixer +-+
 //!                   +------>       +--------+
 //!                   |      +-------+        |
-//!               +--------+              +---v---+
-//!               | Damper <--------------+ Delay |
-//!               +--------+              +-------+
+//!               +--------+              +---v----+
+//!               | Delay  <--------------+ Damper |
+//!               +--------+              +--------+
 
 use actor::{Actor, Addr, Context, Recipient, System};
 use anyhow::Error;
@@ -270,15 +270,15 @@ fn main() -> Result<(), Error> {
     // Create Mixer address explicitly in order to break the circular dependency loop.
     let mixer_addr = Addr::default();
 
-    // Damper feeds back into Mixer.
-    let damper_addr = system.spawn(Damper { next: mixer_addr.recipient() })?;
+    // Delay feeds back into Mixer.
+    let delay_addr = system.spawn(Delay::new(mixer_addr.recipient()))?;
 
-    // Delay effect goes into Damper.
-    let delay_addr = system.spawn(Delay::new(damper_addr.recipient()))?;
+    // Damper goes into Delay effect.
+    let damper_addr = system.spawn(Damper { next: delay_addr.recipient() })?;
 
     // We can finally spawn the Mixer. Feeds into Output and Delay effect.
     system
-        .prepare_fn(move || Mixer::new(output_addr.recipient(), delay_addr.recipient()))
+        .prepare_fn(move || Mixer::new(output_addr.recipient(), damper_addr.recipient()))
         .with_addr(mixer_addr.clone())
         .spawn()?;
 
