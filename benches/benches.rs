@@ -1,32 +1,31 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput, BatchSize};
-use actor::{Actor, Addr, Context, System, NoopMetricsHandler};
+use actor::{Actor, Addr, Context, NoopMetricsHandler, System};
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 
 struct ChainLink {
     next: Option<Addr<ChainLink>>,
 }
 
 impl Actor for ChainLink {
-        type Error = ();
-        type Message = bool;
+    type Error = ();
+    type Message = bool;
 
-        fn name() -> &'static str {
-            "ChainLink"
+    fn name() -> &'static str {
+        "ChainLink"
+    }
+
+    fn handle(
+        &mut self,
+        context: &Context<Self>,
+        message: Self::Message,
+    ) -> Result<(), Self::Error> {
+        if let Some(ref next) = self.next {
+            next.send(message).unwrap();
+        } else if message {
+            context.system_handle.shutdown().unwrap();
         }
 
-        fn handle(
-            &mut self,
-            context: &Context<Self>,
-            message: Self::Message,
-        ) -> Result<(), Self::Error> {
-
-            if let Some(ref next) = self.next {
-                next.send(message).unwrap();
-            } else if message {
-                context.system_handle.shutdown().unwrap();
-            }
-
-            Ok(())
-        }
+        Ok(())
+    }
 }
 
 fn make_chain(num_actors: usize) -> (System<NoopMetricsHandler>, Addr<ChainLink>, Addr<ChainLink>) {
@@ -41,7 +40,9 @@ fn make_chain(num_actors: usize) -> (System<NoopMetricsHandler>, Addr<ChainLink>
     (system, next.unwrap(), addr)
 }
 
-fn run_chain((mut system, start, end): (System<NoopMetricsHandler>, Addr<ChainLink>, Addr<ChainLink>)) {
+fn run_chain(
+    (mut system, start, end): (System<NoopMetricsHandler>, Addr<ChainLink>, Addr<ChainLink>),
+) {
     start.send(true).unwrap();
     system.run_on_main(ChainLink { next: None }, end).unwrap();
 }
@@ -52,9 +53,15 @@ fn criterion_benchmark(c: &mut Criterion) {
     group.bench_function("spawn 1", |b| b.iter(|| make_chain(black_box(1))));
     group.bench_function("spawn 10", |b| b.iter(|| make_chain(black_box(10))));
     group.bench_function("spawn 50", |b| b.iter(|| make_chain(black_box(50))));
-    group.bench_function("chain 1", |b| b.iter_batched(|| make_chain(1), run_chain, BatchSize::SmallInput));
-    group.bench_function("chain 10", |b| b.iter_batched(|| make_chain(10), run_chain, BatchSize::SmallInput));
-    group.bench_function("chain 50", |b| b.iter_batched(|| make_chain(50), run_chain, BatchSize::SmallInput));
+    group.bench_function("chain 1", |b| {
+        b.iter_batched(|| make_chain(1), run_chain, BatchSize::SmallInput)
+    });
+    group.bench_function("chain 10", |b| {
+        b.iter_batched(|| make_chain(10), run_chain, BatchSize::SmallInput)
+    });
+    group.bench_function("chain 50", |b| {
+        b.iter_batched(|| make_chain(50), run_chain, BatchSize::SmallInput)
+    });
 }
 
 criterion_group!(benches, criterion_benchmark);
