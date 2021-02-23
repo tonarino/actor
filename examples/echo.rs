@@ -228,7 +228,7 @@ fn main() -> Result<(), Error> {
     let output_addr = system.prepare(Output).with_capacity(60).spawn()?;
 
     // Create Mixer address explicitly in order to break the circular dependency loop.
-    let mixer_addr = Addr::<Mixer>::default();
+    let mixer_addr = Addr::default();
 
     // Damper feeds back into Mixer.
     let damper_addr = system.spawn(Damper { next: mixer_addr.recipient() })?;
