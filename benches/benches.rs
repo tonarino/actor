@@ -1,4 +1,4 @@
-use actor::{Actor, Addr, Context, NoopMetricsHandler, System};
+use actor::{Actor, Addr, Context, System};
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 
 struct ChainLink {
@@ -28,8 +28,8 @@ impl Actor for ChainLink {
     }
 }
 
-fn make_chain(num_actors: usize) -> (System<NoopMetricsHandler>, Addr<ChainLink>, Addr<ChainLink>) {
-    let mut system = System::<NoopMetricsHandler>::new("chain");
+fn make_chain(num_actors: usize) -> (System, Addr<ChainLink>, Addr<ChainLink>) {
+    let mut system = System::new("chain");
 
     let addr = Addr::default();
     let mut next = Some(addr.clone());
@@ -40,9 +40,7 @@ fn make_chain(num_actors: usize) -> (System<NoopMetricsHandler>, Addr<ChainLink>
     (system, next.unwrap(), addr)
 }
 
-fn run_chain(
-    (mut system, start, end): (System<NoopMetricsHandler>, Addr<ChainLink>, Addr<ChainLink>),
-) {
+fn run_chain((mut system, start, end): (System, Addr<ChainLink>, Addr<ChainLink>)) {
     start.send(true).unwrap();
     system.run_on_main(ChainLink { next: None }, end).unwrap();
 }

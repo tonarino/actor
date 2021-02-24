@@ -46,15 +46,7 @@ use crossbeam::channel::{self, select, Receiver, SendError, Sender, TrySendError
 use failure::{bail, err_msg, format_err, Error};
 use log::*;
 use parking_lot::{Mutex, RwLock};
-use std::{
-    ops::Deref,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-    thread,
-    time::Duration,
-};
+use std::{ops::Deref, sync::Arc, thread, time::Duration};
 
 #[cfg(test)]
 pub mod testing;
@@ -515,20 +507,6 @@ pub enum ErroredResult {
     Unrecoverable,
 }
 
-#[derive(Default)]
-struct AtomicCounter(pub AtomicUsize);
-
-impl AtomicCounter {
-    fn add(&self, amount: usize) -> usize {
-        self.0.fetch_add(amount, Ordering::Relaxed)
-    }
-
-    #[allow(dead_code)]
-    fn reset(&self) -> usize {
-        self.0.swap(0, Ordering::Relaxed)
-    }
-}
-
 pub struct Addr<A: Actor + ?Sized> {
     recipient: Recipient<A::Message>,
     message_rx: Receiver<A::Message>,
@@ -568,13 +546,7 @@ impl<A: Actor> Addr<A> {
         let (control_tx, control_rx) = channel::bounded(MAX_CHANNEL_BLOAT);
 
         Self {
-            recipient: Recipient {
-                actor_name: A::name().into(),
-                message_tx,
-                control_tx,
-                messages_attempted: Arc::new(AtomicCounter::default()),
-                messages_overflown: Arc::new(AtomicCounter::default()),
-            },
+            recipient: Recipient { actor_name: A::name().into(), message_tx, control_tx },
             message_rx,
             control_rx,
         }
@@ -593,8 +565,6 @@ pub struct Recipient<M> {
     actor_name: String,
     message_tx: Sender<M>,
     control_tx: Sender<Control>,
-    messages_attempted: Arc<AtomicCounter>,
-    messages_overflown: Arc<AtomicCounter>,
 }
 
 // #[derive(Clone)] adds Clone bound to M, which is not necessary.
@@ -605,8 +575,6 @@ impl<M> Clone for Recipient<M> {
             actor_name: self.actor_name.clone(),
             message_tx: self.message_tx.clone(),
             control_tx: self.control_tx.clone(),
-            messages_attempted: self.messages_attempted.clone(),
-            messages_overflown: self.messages_overflown.clone(),
         }
     }
 }
@@ -618,13 +586,7 @@ impl<M> Recipient<M> {
     // failure::Error. This is not straightforward right now, when M does not
     // implement Send trait.
     pub fn try_send<N: Into<M>>(&self, message: N) -> Result<(), TrySendError<M>> {
-        self.messages_attempted.add(1);
-
-        let result = self.message_tx.try_send(message.into());
-        if let Err(TrySendError::Full(_)) = &result {
-            self.messages_overflown.add(1);
-        }
-        result
+        self.message_tx.try_send(message.into())
     }
 
     /// Non-blocking call to send a message. Use this if there is nothing you can
