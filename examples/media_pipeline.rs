@@ -307,7 +307,7 @@ mod actors {
                     self.next.send(MediaFrame::Video(frame_counter))?;
                 },
                 EncodedMediaFrame::Audio(_) => {
-                    bail!("Why did you give the VideoDecodeActor an audio EncodedMediaFrame?",);
+                    bail!("Why did you give the VideoDecodeActor an audio EncodedMediaFrame?");
                 },
             }
 
