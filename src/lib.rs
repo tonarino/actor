@@ -56,11 +56,11 @@ static MAX_CHANNEL_BLOAT: usize = 5;
 #[derive(Debug)]
 pub enum ActorError {
     /// The system has stopped, and a new actor can not be started.
-    SystemStopped(&'static str),
+    SystemStopped { actor_name: &'static str },
     /// The actor message channel is disconnected.
-    ChannelDisconnected(&'static str),
+    ChannelDisconnected { actor_name: &'static str },
     /// Failed to spawn an actor thread.
-    SpawnFailed(&'static str),
+    SpawnFailed { actor_name: &'static str },
     /// A panic occurred inside an actor thread.
     ActorPanic,
 }
@@ -68,13 +68,13 @@ pub enum ActorError {
 impl fmt::Display for ActorError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            ActorError::SystemStopped(actor_name) => {
+            ActorError::SystemStopped { actor_name } => {
                 write!(f, "The system is not running. The actor {} can not be started.", actor_name)
             },
-            ActorError::ChannelDisconnected(actor_name) => {
+            ActorError::ChannelDisconnected { actor_name } => {
                 write!(f, "The message channel is disconnected for the actor {}.", actor_name)
             },
-            ActorError::SpawnFailed(actor_name) => {
+            ActorError::SpawnFailed { actor_name } => {
                 write!(f, "Failed to spawn a thread for the actor {}.", actor_name)
             },
             ActorError::ActorPanic => {
@@ -221,7 +221,7 @@ impl System {
         let system_state_lock = self.handle.system_state.read();
         match *system_state_lock {
             SystemState::ShuttingDown | SystemState::Stopped => {
-                return Err(ActorError::SystemStopped(A::name()));
+                return Err(ActorError::SystemStopped { actor_name: A::name() });
             },
             SystemState::Running => {},
         }
@@ -246,7 +246,7 @@ impl System {
 
                 actor_result
             })
-            .map_err(|_| ActorError::SpawnFailed(A::name()))?;
+            .map_err(|_| ActorError::SpawnFailed { actor_name: A::name() })?;
 
         self.handle
             .registry
@@ -273,7 +273,7 @@ impl System {
     {
         // Prevent race condition of spawn and shutdown.
         if !self.is_running() {
-            return Err(ActorError::SystemStopped(A::name()));
+            return Err(ActorError::SystemStopped { actor_name: A::name() });
         }
 
         let system_handle = &self.handle;
@@ -341,7 +341,7 @@ impl System {
                             }
                         },
                         Err(_) => {
-                            return Err(ActorError::ChannelDisconnected(A::name()));
+                            return Err(ActorError::ChannelDisconnected{actor_name:A::name()});
                         }
                     }
                 },
