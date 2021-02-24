@@ -321,18 +321,8 @@ where
                     match msg {
                         Ok(msg) => {
                             trace!("[{}] message received by {}", system_handle.name, A::name());
-                            if let Err(e) = actor.handle(&context, msg) {
-                                // If we receive an unrecoverable error while calling `actor.errored()`,
-                                // we should leave the actor receive loop so we don't endlessly try to
-                                // shut down the actor system (which is the default `errored()` implementation).
-                                match actor.errored(&context, e) {
-                                    ErroredResult::Recoverable => {
-                                        continue;
-                                    }
-                                    ErroredResult::Unrecoverable => {
-                                        return Ok(());
-                                    }
-                                }
+                            if let Err(_e) = actor.handle(&context, msg) {
+                                return Ok(());
                             }
                         },
                         Err(_) => {
@@ -532,27 +522,6 @@ pub trait Actor {
 
     /// An optional callback when the Actor has been stopped.
     fn stopped(&mut self, _context: &Context<Self>) {}
-
-    /// An optional callback when the Actor has returned an error on handle.
-    /// The default implementation shuts down the entire system. Actors
-    /// supporting a recovery mechanism should override this function.
-    fn errored(&mut self, context: &Context<Self>, error: Self::Error) -> ErroredResult {
-        error!("{} error: {:?}", Self::name(), error);
-        let _ = context.system_handle.shutdown();
-
-        // This always returns ErroredResult::Unrecoverable but Actors can override
-        // the implementation so their receive loop doesn't stop.
-        ErroredResult::Unrecoverable
-    }
-}
-
-/// Returned from Actor::errored().
-/// `Recoverable` indicates the actor receive loop should continue to try processing messages.
-/// `Unrecoverable` indicates the actor should break from its receive loop.
-#[derive(Debug)]
-pub enum ErroredResult {
-    Recoverable,
-    Unrecoverable,
 }
 
 #[allow(dead_code)]
