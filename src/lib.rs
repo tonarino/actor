@@ -43,16 +43,39 @@
 //!
 
 use crossbeam::channel::{self, select, Receiver, SendError, Sender, TrySendError};
-use failure::{bail, err_msg, format_err, Error};
 use log::*;
 use parking_lot::{Mutex, RwLock};
-use std::{ops::Deref, sync::Arc, thread, time::Duration};
+use std::{fmt, ops::Deref, sync::Arc, thread, time::Duration};
 
 #[cfg(test)]
 pub mod testing;
 
 // TODO(jake): make configurable per actor.
 static MAX_CHANNEL_BLOAT: usize = 5;
+
+/// All the actor errors are reported in this type.
+pub type Error = Box<dyn std::error::Error>;
+
+#[derive(Debug)]
+struct ActorError(String);
+
+impl ActorError {
+    fn new<S: Into<String>>(message: S) -> Self {
+        Self(message.into())
+    }
+}
+
+impl fmt::Display for ActorError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for ActorError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        None
+    }
+}
 
 /// Systems are responsible for keeping track of their spawned actors, and managing
 /// their lifecycles appropriately.
@@ -185,10 +208,11 @@ impl System {
         let system_state_lock = self.handle.system_state.read();
         match *system_state_lock {
             SystemState::ShuttingDown | SystemState::Stopped => {
-                return Err(format_err!(
+                return Err(ActorError::new(format!(
                     "the system is not running, the actor {} can not be started.",
-                    A::name()
-                ));
+                    A::name(),
+                ))
+                .into());
             },
             SystemState::Running => {},
         }
@@ -236,7 +260,11 @@ impl System {
     {
         // Prevent race condition of spawn and shutdown.
         if !self.is_running() {
-            bail!("the system is not running. the actor {} can not be started.", A::name());
+            return Err(ActorError::new(format!(
+                "the system is not running. the actor {} can not be started.",
+                A::name()
+            ))
+            .into());
         }
 
         let system_handle = &self.handle;
@@ -265,7 +293,7 @@ impl System {
         addr: Addr<A>,
         context: &Context<A>,
         system_handle: &SystemHandle,
-    ) -> Result<(), Error>
+    ) -> Result<(), ActorError>
     where
         A: Actor,
     {
@@ -304,7 +332,7 @@ impl System {
                             }
                         },
                         Err(_) => {
-                            bail!("[{}] message channel empty and disconnected. ending actor thread.", A::name());
+                            return Err(ActorError::new(format!("[{}] message channel empty and disconnected. ending actor thread", A::name())));
                         }
                     }
                 },
@@ -420,7 +448,7 @@ impl SystemHandle {
         *self.system_state.write() = SystemState::Stopped;
 
         if err_count > 0 {
-            Err(err_msg("a panic inside an actor thread (see error logs above)"))
+            Err(ActorError::new("a panic inside an actor thread (see error logs above)").into())
         } else {
             Ok(())
         }
@@ -433,7 +461,7 @@ impl SystemHandle {
 
 enum RegistryEntry {
     CurrentThread(ControlAddr),
-    BackgroundThread(ControlAddr, thread::JoinHandle<Result<(), Error>>),
+    BackgroundThread(ControlAddr, thread::JoinHandle<Result<(), ActorError>>),
 }
 
 impl RegistryEntry {
@@ -582,9 +610,6 @@ impl<M> Clone for Recipient<M> {
 impl<M> Recipient<M> {
     /// Non-blocking call to send a message. Use this if you need to react when
     /// the channel is full.
-    // TODO(ryo): Provide a helper trait to convert TrySendError into
-    // failure::Error. This is not straightforward right now, when M does not
-    // implement Send trait.
     pub fn try_send<N: Into<M>>(&self, message: N) -> Result<(), TrySendError<M>> {
         self.message_tx.try_send(message.into())
     }

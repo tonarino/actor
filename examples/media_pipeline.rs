@@ -1,7 +1,6 @@
 use crate::actors::*;
 use actor::{Addr, System, SystemCallbacks};
 use env_logger::Env;
-use failure::Error;
 
 /// A simplistic representation of a MediaFrame, they just hold frame counters.
 pub enum MediaFrame {
@@ -17,8 +16,7 @@ pub enum EncodedMediaFrame {
 
 mod actors {
     use crate::{EncodedMediaFrame, MediaFrame};
-    use actor::{Actor, Context, Recipient};
-    use failure::{bail, Error};
+    use actor::{Actor, Context, Error, Recipient};
     use std::{thread, time::Duration};
 
     // Messages
@@ -121,7 +119,7 @@ mod actors {
                     self.next.send(EncodedMediaFrame::Video(frame_counter))?;
                 },
                 MediaFrame::Audio(_) => {
-                    bail!("Why did you give the VideoEncodeActor an audio MediaFrame?");
+                    return Err("Why did you give the VideoEncodeActor an audio MediaFrame?".into());
                 },
             }
 
@@ -199,7 +197,7 @@ mod actors {
                     self.next.send(EncodedMediaFrame::Audio(frame_counter))?;
                 },
                 MediaFrame::Video(_) => {
-                    bail!("Why did you give the AudioEncodeActor a video MediaFrame?");
+                    return Err("Why did you give the AudioEncodeActor a video MediaFrame?".into());
                 },
             }
 
@@ -307,7 +305,9 @@ mod actors {
                     self.next.send(MediaFrame::Video(frame_counter))?;
                 },
                 EncodedMediaFrame::Audio(_) => {
-                    bail!("Why did you give the VideoDecodeActor an audio EncodedMediaFrame?");
+                    return Err(
+                        "Why did you give the VideoDecodeActor an audio EncodedMediaFrame?".into(),
+                    );
                 },
             }
 
@@ -343,7 +343,9 @@ mod actors {
                     self.next.send(MediaFrame::Audio(frame_counter))?;
                 },
                 EncodedMediaFrame::Video(_) => {
-                    bail!("Why did you give the AudioDecodeActor a video EncodedMediaFrame?");
+                    return Err(
+                        "Why did you give the AudioDecodeActor a video EncodedMediaFrame?".into()
+                    );
                 },
             }
 
@@ -377,7 +379,9 @@ mod actors {
                     println!("🔊 Playing back audio frame {}", frame_counter);
                 },
                 MediaFrame::Video(_) => {
-                    bail!("Why did you give the AudioPlaybackActor a video MediaFrame?");
+                    return Err(
+                        "Why did you give the AudioPlaybackActor a video MediaFrame?".into()
+                    );
                 },
             }
 
@@ -418,7 +422,9 @@ mod actors {
                     }
                 },
                 MediaFrame::Audio(_) => {
-                    bail!("Why did you give the VideoDisplayActor an audio MediaFrame?");
+                    return Err(
+                        "Why did you give the VideoDisplayActor an audio MediaFrame?".into()
+                    );
                 },
             }
 
@@ -427,7 +433,7 @@ mod actors {
     }
 }
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<(), actor::Error> {
     env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
 
     let system_callbacks = SystemCallbacks {

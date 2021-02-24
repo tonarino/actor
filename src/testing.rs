@@ -1,8 +1,6 @@
 use std::{thread, time::Duration};
 
-use failure::Error;
-
-use crate::System;
+use crate::{Error, System};
 
 /// A helper wrapper to run test actors for a certain period.
 ///

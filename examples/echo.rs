@@ -16,9 +16,8 @@
 //!               | Damper <--------------+ Delay |
 //!               +--------+              +-------+
 
-use actor::{Actor, Addr, Context, Recipient, System};
+use actor::{Actor, Addr, Context, Error, Recipient, System};
 use env_logger::Env;
-use failure::Error;
 use log::trace;
 use std::{
     convert::TryInto,

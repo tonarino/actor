@@ -7,7 +7,6 @@ edition = "2018"
 
 [dependencies]
 crossbeam = "0.7"
-failure = "0.1"
 log = "0.4"
 parking_lot = "0.11"
 
