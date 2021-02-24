@@ -11,7 +11,7 @@
 //!
 //! # Example
 //! ```rust
-//! use actor::{Actor, Context, NoopMetricsHandler, System};
+//! use actor::{Actor, Context, System};
 //!
 //! struct TestActor {}
 //! impl Actor for TestActor {
@@ -29,7 +29,7 @@
 //!     }
 //! }
 //!
-//! let mut system = System::<NoopMetricsHandler>::new("default");
+//! let mut system = System::new("default");
 //!
 //! // will spin up a new thread running this actor
 //! let addr = system.spawn(TestActor {}).unwrap();
@@ -53,7 +53,7 @@ use std::{
         Arc,
     },
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 #[cfg(test)]
@@ -68,9 +68,8 @@ static MAX_CHANNEL_BLOAT: usize = 5;
 /// You may run multiple systems in the same application, each system being responsible
 /// for its own pool of actors.
 #[derive(Default)]
-pub struct System<M: MetricsHandler = NoopMetricsHandler> {
+pub struct System {
     handle: SystemHandle,
-    metrics_handler: Option<M>,
 }
 
 type SystemCallback = Box<dyn Fn() -> Result<(), Error> + Send + Sync>;
@@ -120,10 +119,7 @@ pub struct Context<A: Actor + ?Sized> {
     pub myself: Addr<A>,
 }
 
-impl<M> System<M>
-where
-    M: MetricsHandler + Send + 'static,
-{
+impl System {
     /// Creates a new System with a given name.
     pub fn new(name: &str) -> Self {
         System::with_callbacks(name, Default::default())
@@ -136,12 +132,7 @@ where
                 callbacks: Arc::new(callbacks),
                 ..SystemHandle::default()
             },
-            metrics_handler: None,
         }
-    }
-
-    pub fn set_metrics_handler(&mut self, metrics_handler: M) {
-        self.metrics_handler = Some(metrics_handler);
     }
 
     /// Spawn a normal [`Actor`] in the system.
@@ -212,7 +203,6 @@ where
 
         let system_handle = self.handle.clone();
         let context = Context { system_handle: system_handle.clone(), myself: addr.clone() };
-        let mut metrics_handler = self.metrics_handler.clone();
         let control_addr = addr.control_addr();
 
         let thread_handle = thread::Builder::new().name(A::name().into()).spawn(move || {
@@ -221,13 +211,7 @@ where
             actor.started(&context);
             debug!("[{}] started actor: {}", system_handle.name, A::name());
 
-            let actor_result = Self::run_actor_select_loop(
-                actor,
-                addr,
-                &context,
-                &system_handle,
-                &mut metrics_handler,
-            );
+            let actor_result = Self::run_actor_select_loop(actor, addr, &context, &system_handle);
             if let Err(err) = &actor_result {
                 error!("run_actor_select_loop returned an error: {}", err);
             }
@@ -271,13 +255,7 @@ where
 
         actor.started(&context);
         debug!("[{}] started actor: {}", system_handle.name, A::name());
-        Self::run_actor_select_loop(
-            actor,
-            addr,
-            &context,
-            system_handle,
-            &mut self.metrics_handler,
-        )?;
+        Self::run_actor_select_loop(actor, addr, &context, system_handle)?;
 
         // Wait for the system to shutdown before we exit, otherwise the process
         // would exit before the system is completely shutdown
@@ -295,7 +273,6 @@ where
         addr: Addr<A>,
         context: &Context<A>,
         system_handle: &SystemHandle,
-        metrics_handler: &mut Option<M>,
     ) -> Result<(), Error>
     where
         A: Actor,
@@ -317,7 +294,6 @@ where
                 },
 
                 recv(addr.message_rx) -> msg => {
-                    let handle_start = Instant::now();
                     match msg {
                         Ok(msg) => {
                             trace!("[{}] message received by {}", system_handle.name, A::name());
@@ -339,35 +315,19 @@ where
                             bail!("[{}] message channel empty and disconnected. ending actor thread.", A::name());
                         }
                     }
-
-                    if let Some(ref mut metrics_handler) = metrics_handler {
-                        let metrics = Metrics {
-                            handle_start,
-                            handle_runtime: handle_start.elapsed(),
-                            messages_attempted: addr.recipient.messages_attempted.reset(),
-                            messages_overflown: addr.recipient.messages_overflown.reset(),
-                        };
-                        metrics_handler.handle(A::name(), metrics);
-                    }
                 },
             };
         }
     }
 }
 
-impl<M> Drop for System<M>
-where
-    M: MetricsHandler,
-{
+impl Drop for System {
     fn drop(&mut self) {
         self.shutdown().unwrap();
     }
 }
 
-impl<M> Deref for System<M>
-where
-    M: MetricsHandler,
-{
+impl Deref for System {
     type Target = SystemHandle;
 
     fn deref(&self) -> &Self::Target {
@@ -524,7 +484,7 @@ pub trait Actor {
         message: Self::Message,
     ) -> Result<(), Self::Error>;
 
-    /// The name of the Actor - used only for logging/metrics/debugging.
+    /// The name of the Actor - used only for logging/debugging.
     fn name() -> &'static str;
 
     /// An optional callback when the Actor has been started.
@@ -555,29 +515,6 @@ pub enum ErroredResult {
     Unrecoverable,
 }
 
-#[allow(dead_code)]
-pub struct Metrics {
-    // The instant at which the actor's handle() function was invoked.
-    pub handle_start: Instant,
-    // The duration of the actor's handle() function runtime.
-    pub handle_runtime: Duration,
-    // Number of messages attempted to be sent.
-    pub messages_attempted: usize,
-    // Number of messages attempted but failed due to channel bloat.
-    pub messages_overflown: usize,
-}
-
-pub trait MetricsHandler: Send + Clone {
-    fn handle(&mut self, actor_name: &'static str, metrics: Metrics);
-}
-
-#[derive(Clone)]
-pub struct NoopMetricsHandler {}
-
-impl MetricsHandler for NoopMetricsHandler {
-    fn handle(&mut self, _: &'static str, _: Metrics) {}
-}
-
 #[derive(Default)]
 struct AtomicCounter(pub AtomicUsize);
 
@@ -586,6 +523,7 @@ impl AtomicCounter {
         self.0.fetch_add(amount, Ordering::Relaxed)
     }
 
+    #[allow(dead_code)]
     fn reset(&self) -> usize {
         self.0.swap(0, Ordering::Relaxed)
     }
@@ -776,7 +714,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let mut system = System::<NoopMetricsHandler>::new("hi");
+        let mut system = System::new("hi");
         let address = system.spawn(TestActor {}).unwrap();
         let _ = system.spawn(TestActor {}).unwrap();
         let _ = system.spawn(TestActor {}).unwrap();
