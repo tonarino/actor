@@ -42,7 +42,7 @@
 //! ```
 //!
 
-use crossbeam_channel::{self as channel, select, Receiver, SendError, Sender, TrySendError};
+use crossbeam_channel::{self as channel, select, Receiver, Sender};
 use log::*;
 use parking_lot::{Mutex, RwLock};
 use std::{fmt, ops::Deref, sync::Arc, thread, time::Duration};
@@ -85,6 +85,35 @@ impl fmt::Display for ActorError {
 }
 
 impl std::error::Error for ActorError {}
+
+/// Reasons why sending a message to an actor can fail.
+#[derive(Debug)]
+pub enum SendError {
+    /// The channel's capacity is full.
+    Full,
+    /// The recipient of the message no longer exists.
+    Disconnected,
+}
+
+impl fmt::Display for SendError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SendError::Full => write!(f, "The channel's capacity is full."),
+            SendError::Disconnected => write!(f, "The recipient of the message no longer exists."),
+        }
+    }
+}
+
+impl std::error::Error for SendError {}
+
+impl<M> From<channel::TrySendError<M>> for SendError {
+    fn from(orig: channel::TrySendError<M>) -> Self {
+        match orig {
+            channel::TrySendError::Full(_) => Self::Full,
+            channel::TrySendError::Disconnected(_) => Self::Disconnected,
+        }
+    }
+}
 
 /// Systems are responsible for keeping track of their spawned actors, and managing
 /// their lifecycles appropriately.
@@ -618,16 +647,16 @@ impl<M> Clone for Recipient<M> {
 impl<M> Recipient<M> {
     /// Non-blocking call to send a message. Use this if you need to react when
     /// the channel is full.
-    pub fn try_send<N: Into<M>>(&self, message: N) -> Result<(), TrySendError<M>> {
-        self.message_tx.try_send(message.into())
+    pub fn try_send<N: Into<M>>(&self, message: N) -> Result<(), SendError> {
+        self.message_tx.try_send(message.into()).map_err(SendError::from)
     }
 
     /// Non-blocking call to send a message. Use this if there is nothing you can
     /// do when the channel is full. The method still logs a warning for you in
     /// that case.
-    pub fn send<N: Into<M>>(&self, message: N) -> Result<(), TrySendError<M>> {
+    pub fn send<N: Into<M>>(&self, message: N) -> Result<(), SendError> {
         let result = self.try_send(message.into());
-        if let Err(TrySendError::Full(_)) = &result {
+        if let Err(SendError::Full) = &result {
             trace!("[{}] dropped message (channel bloat)", self.actor_name);
             return Ok(());
         }
@@ -643,7 +672,7 @@ impl<M> Recipient<M> {
     /// Non-blocking call to send a message. Use if you expect the channel to be
     /// frequently full (slow consumer), but would still like to be notified if a
     /// different error occurs (e.g. disconnection).
-    pub fn send_if_not_full<N: Into<M>>(&self, message: N) -> Result<(), TrySendError<M>> {
+    pub fn send_if_not_full<N: Into<M>>(&self, message: N) -> Result<(), SendError> {
         if self.remaining_capacity().unwrap_or(usize::max_value()) > 1 {
             return self.send(message);
         }
@@ -651,8 +680,8 @@ impl<M> Recipient<M> {
         Ok(())
     }
 
-    pub fn stop(&self) -> Result<(), SendError<()>> {
-        self.control_tx.send(Control::Stop).map_err(|_| SendError(()))
+    pub fn stop(&self) -> Result<(), SendError> {
+        self.control_tx.send(Control::Stop).map_err(|_| SendError::Disconnected)
     }
 
     // TODO(ryo): Properly support the concept of priority channels.
