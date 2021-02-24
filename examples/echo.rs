@@ -71,11 +71,11 @@ fn silence_chunk() -> Chunk {
 }
 
 /// Actor to read and decode input stream (stdin) and produce sound [`DryChunk`]s.
-struct Input<M> {
-    next: Recipient<M>,
+struct Input {
+    next: Recipient<DryChunk>,
 }
 
-impl<M: From<DryChunk>> Actor for Input<M> {
+impl Actor for Input {
     type Error = Error;
     type Message = ReadNext;
 
@@ -147,15 +147,15 @@ impl From<WetChunk> for MixerInput {
 
 /// Audio mixer actor. Mixes 2 inputs (dry, wet) together, provides 2 equal outputs.
 /// Consumer either [`DryChunk`]s or [`WetChunk`]s and produces [`Chunk`]s.
-struct Mixer<M1, M2> {
-    out_1: Recipient<M1>,
-    out_2: Recipient<M2>,
+struct Mixer {
+    out_1: Recipient<Chunk>,
+    out_2: Recipient<Chunk>,
     dry_buffer: Option<DryChunk>,
     wet_buffer: Option<WetChunk>,
 }
 
-impl<M1, M2> Mixer<M1, M2> {
-    fn new(out_1: Recipient<M1>, out_2: Recipient<M2>) -> Self {
+impl Mixer {
+    fn new(out_1: Recipient<Chunk>, out_2: Recipient<Chunk>) -> Self {
         // Start with buffers filled, so that output is produced right for the first message.
         Self {
             out_1,
@@ -166,7 +166,7 @@ impl<M1, M2> Mixer<M1, M2> {
     }
 }
 
-impl<M1: From<Chunk>, M2: From<Chunk>> Actor for Mixer<M1, M2> {
+impl Actor for Mixer {
     type Error = Error;
     type Message = MixerInput;
 
@@ -203,20 +203,20 @@ impl<M1: From<Chunk>, M2: From<Chunk>> Actor for Mixer<M1, M2> {
 
 /// Delay audio effect actor. Technically just a fixed circular buffer.
 /// Consumes [`Chunk`]s and produces [`WetChunk`]s.
-struct Delay<M> {
-    next: Recipient<M>,
+struct Delay {
+    next: Recipient<WetChunk>,
     buffer: Vec<Chunk>,
     index: usize,
 }
 
-impl<M> Delay<M> {
-    fn new(next: Recipient<M>) -> Self {
+impl Delay {
+    fn new(next: Recipient<WetChunk>) -> Self {
         let buffer: Vec<Chunk> = repeat(silence_chunk()).take(DELAY_CHUNKS).collect();
         Self { next, buffer, index: 0 }
     }
 }
 
-impl<M: From<WetChunk>> Actor for Delay<M> {
+impl Actor for Delay {
     type Error = Error;
     type Message = Chunk;
 
@@ -236,11 +236,11 @@ impl<M: From<WetChunk>> Actor for Delay<M> {
 }
 
 /// Audio damper actor. Attenuates audio level a bit. Consumes [`Chunk`]s and produces [`WetChunk`]s.
-struct Damper<M> {
-    next: Recipient<M>,
+struct Damper {
+    next: Recipient<WetChunk>,
 }
 
-impl<M: From<WetChunk>> Actor for Damper<M> {
+impl Actor for Damper {
     type Error = Error;
     type Message = Chunk;
 

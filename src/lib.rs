@@ -551,7 +551,8 @@ pub enum Control {
 /// The base actor trait.
 pub trait Actor {
     /// The expected type of a message to be received.
-    type Message: Send;
+    // 'static required to create trait object in Addr, https://stackoverflow.com/q/29740488/4345715
+    type Message: Send + 'static;
     /// The type to return on error in the handle method.
     type Error: std::fmt::Debug;
 
@@ -610,6 +611,7 @@ impl<A: Actor> Addr<A> {
         let (message_tx, message_rx) = channel::bounded::<A::Message>(capacity);
         let (control_tx, control_rx) = channel::bounded(MAX_CHANNEL_BLOAT);
 
+        let message_tx = Arc::new(message_tx);
         Self {
             recipient: Recipient { actor_name: A::name().into(), message_tx, control_tx },
             message_rx,
@@ -619,16 +621,22 @@ impl<A: Actor> Addr<A> {
 
     /// "Genericize" an address to, rather than point to a specific actor,
     /// be applicable to any actor that handles a given message-response type.
-    pub fn recipient(&self) -> Recipient<A::Message> {
-        self.recipient.clone()
+    /// Allows you to create recipient not only of `A::Message`, but of any `M: Into<A::Message>`.
+    pub fn recipient<M: Into<A::Message>>(&self) -> Recipient<M> {
+        Recipient {
+            actor_name: A::name().into(),
+            // Each level of boxing adds one .into() call, so box here to convert A::Message to M.
+            message_tx: Arc::new(self.recipient.message_tx.clone()),
+            control_tx: self.recipient.control_tx.clone(),
+        }
     }
 }
 
-/// Similar to `Addr`, but rather than pointing to a specific actor,
+/// Similar to [`Addr`], but rather than pointing to a specific actor,
 /// it is typed for any actor that handles a given message-response type.
 pub struct Recipient<M> {
     actor_name: String,
-    message_tx: Sender<M>,
+    message_tx: Arc<dyn SenderTrait<M>>,
     control_tx: Sender<Control>,
 }
 
@@ -647,15 +655,15 @@ impl<M> Clone for Recipient<M> {
 impl<M> Recipient<M> {
     /// Non-blocking call to send a message. Use this if you need to react when
     /// the channel is full.
-    pub fn try_send<N: Into<M>>(&self, message: N) -> Result<(), SendError> {
-        self.message_tx.try_send(message.into()).map_err(SendError::from)
+    pub fn try_send(&self, message: M) -> Result<(), SendError> {
+        self.message_tx.try_send(message).map_err(SendError::from)
     }
 
     /// Non-blocking call to send a message. Use this if there is nothing you can
     /// do when the channel is full. The method still logs a warning for you in
     /// that case.
-    pub fn send<N: Into<M>>(&self, message: N) -> Result<(), SendError> {
-        let result = self.try_send(message.into());
+    pub fn send(&self, message: M) -> Result<(), SendError> {
+        let result = self.try_send(message);
         if let Err(SendError::Full) = &result {
             trace!("[{}] dropped message (channel bloat)", self.actor_name);
             return Ok(());
@@ -665,14 +673,14 @@ impl<M> Recipient<M> {
 
     /// Non-blocking call to send a message. Use this if you do not care if
     /// messages are being dropped.
-    pub fn send_quiet<N: Into<M>>(&self, message: N) {
-        let _ = self.try_send(message.into());
+    pub fn send_quiet(&self, message: M) {
+        let _ = self.try_send(message);
     }
 
     /// Non-blocking call to send a message. Use if you expect the channel to be
     /// frequently full (slow consumer), but would still like to be notified if a
     /// different error occurs (e.g. disconnection).
-    pub fn send_if_not_full<N: Into<M>>(&self, message: N) -> Result<(), SendError> {
+    pub fn send_if_not_full(&self, message: M) -> Result<(), SendError> {
         if self.remaining_capacity().unwrap_or(usize::max_value()) > 1 {
             return self.send(message);
         }
@@ -686,11 +694,51 @@ impl<M> Recipient<M> {
 
     // TODO(ryo): Properly support the concept of priority channels.
     pub fn remaining_capacity(&self) -> Option<usize> {
-        self.message_tx.capacity().map(|capacity| capacity - self.message_tx.len())
+        let message_tx = &self.message_tx as &dyn SenderTrait<M>;
+        message_tx.capacity().map(|capacity| capacity - message_tx.len())
     }
 
     pub fn control_addr(&self) -> ControlAddr {
         ControlAddr { control_tx: self.control_tx.clone() }
+    }
+}
+
+/// Internal trait to generalize over [`Sender`].
+trait SenderTrait<M>: Send + Sync {
+    fn try_send(&self, message: M) -> Result<(), SendError>;
+
+    fn len(&self) -> usize;
+
+    fn capacity(&self) -> Option<usize>;
+}
+
+/// [`SenderTrait`] is implemented for concrete crossbeam [`Sender`].
+impl<M: Send> SenderTrait<M> for Sender<M> {
+    fn try_send(&self, message: M) -> Result<(), SendError> {
+        self.try_send(message).map_err(SendError::from)
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    fn capacity(&self) -> Option<usize> {
+        self.capacity()
+    }
+}
+
+/// [`SenderTrait`] is also implemented for boxed version of itself, incluling M -> N conversion.
+impl<M: Into<N>, N> SenderTrait<M> for Arc<dyn SenderTrait<N>> {
+    fn try_send(&self, message: M) -> Result<(), SendError> {
+        self.deref().try_send(message.into())
+    }
+
+    fn len(&self) -> usize {
+        self.deref().len()
+    }
+
+    fn capacity(&self) -> Option<usize> {
+        self.deref().capacity()
     }
 }
 
