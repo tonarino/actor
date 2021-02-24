@@ -3,15 +3,6 @@ use actor::{Addr, System, SystemCallbacks};
 use env_logger::Env;
 use failure::Error;
 
-#[derive(Debug, Clone)]
-pub struct MetricsSender {}
-
-impl MetricsSender {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
 /// A simplistic representation of a MediaFrame, they just hold frame counters.
 pub enum MediaFrame {
     Video(usize),
@@ -436,14 +427,6 @@ mod actors {
     }
 }
 
-impl actor::MetricsHandler for MetricsSender {
-    // This function is called at each actor thread in between
-    // every handle() call
-    fn handle(&mut self, _actor_name: &'static str, _metrics: actor::Metrics) {
-        // Do stuff with the metrics from the actor system here
-    }
-}
-
 fn main() -> Result<(), Error> {
     env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
 
@@ -455,7 +438,7 @@ fn main() -> Result<(), Error> {
         ..SystemCallbacks::default()
     };
 
-    let mut system: System<MetricsSender> = System::with_callbacks("main", system_callbacks);
+    let mut system = System::with_callbacks("main", system_callbacks);
 
     // TODO - Add some extra "config" actors to adjust things like video capture exposure,
     //        or playback volume.

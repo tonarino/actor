@@ -16,7 +16,7 @@
 //!               | Damper <--------------+ Delay |
 //!               +--------+              +-------+
 
-use actor::{Actor, Addr, Context, NoopMetricsHandler, Recipient, System};
+use actor::{Actor, Addr, Context, Recipient, System};
 use env_logger::Env;
 use failure::Error;
 use log::trace;
@@ -221,7 +221,7 @@ impl Actor for Damper {
 fn main() -> Result<(), Error> {
     env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
 
-    let mut system = System::<NoopMetricsHandler>::new("Echo System");
+    let mut system = System::new("Echo System");
 
     // Start creating actors. Because actors "point forward", start with the last one.
     // Set larger message channel capacity for Output actor for some cushion.
