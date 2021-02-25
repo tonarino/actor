@@ -6,7 +6,7 @@ license = "MIT"
 edition = "2018"
 
 [dependencies]
-crossbeam = "0.7"
+crossbeam-channel = "0.5"
 log = "0.4"
 parking_lot = "0.11"
 

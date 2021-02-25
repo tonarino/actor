@@ -42,7 +42,7 @@
 //! ```
 //!
 
-use crossbeam::channel::{self, select, Receiver, SendError, Sender, TrySendError};
+use crossbeam_channel::{self as channel, select, Receiver, SendError, Sender, TrySendError};
 use log::*;
 use parking_lot::{Mutex, RwLock};
 use std::{fmt, ops::Deref, sync::Arc, thread, time::Duration};
