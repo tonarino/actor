@@ -143,6 +143,40 @@ pub struct Context<A: Actor + ?Sized> {
     pub myself: Addr<A>,
 }
 
+#[must_use = "You must call .spawn() or .run_on_main() to run this actor"]
+pub struct SpawnBuilder<'a, A: Actor> {
+    system: &'a mut System,
+    capacity: Option<usize>,
+    addr: Option<Addr<A>>,
+    factory: Box<dyn FnOnce() -> A + Send + 'static>,
+}
+
+impl<'a, A: 'static + Actor> SpawnBuilder<'a, A> {
+    pub fn with_capacity(self, capacity: usize) -> Self {
+        Self { capacity: Some(capacity), ..self }
+    }
+
+    pub fn with_addr(self, addr: Addr<A>) -> Self {
+        Self { addr: Some(addr), ..self }
+    }
+
+    pub fn spawn(self) -> Result<Addr<A>, ActorError> {
+        let factory = self.factory;
+        let capacity = self.capacity.unwrap_or(MAX_CHANNEL_BLOAT);
+        let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
+
+        self.system.spawn_fn_with_addr(factory, addr.clone()).map(move |_| addr)
+    }
+
+    pub fn run_on_main(self) -> Result<(), ActorError> {
+        let factory = self.factory;
+        let capacity = self.capacity.unwrap_or(MAX_CHANNEL_BLOAT);
+        let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
+
+        self.system.run_on_main(factory(), addr)
+    }
+}
+
 impl System {
     /// Creates a new System with a given name.
     pub fn new(name: &str) -> Self {
@@ -159,59 +193,36 @@ impl System {
         }
     }
 
+    /// TODO(bschwind) - Add documentation
+    pub fn prepare<A>(&mut self, actor: A) -> SpawnBuilder<A>
+    where
+        A: Actor + Send + 'static,
+    {
+        SpawnBuilder { system: self, capacity: None, addr: None, factory: Box::new(move || actor) }
+    }
+
+    /// TODO(bschwind) - Add documentation
+    pub fn prepare_fn<A, F>(&mut self, factory: F) -> SpawnBuilder<A>
+    where
+        A: Actor + Send + 'static,
+        F: FnOnce() -> A + Send + 'static,
+    {
+        SpawnBuilder { system: self, capacity: None, addr: None, factory: Box::new(factory) }
+    }
+
     /// Spawn a normal [`Actor`] in the system.
     pub fn spawn<A>(&mut self, actor: A) -> Result<Addr<A>, ActorError>
     where
         A: Actor + Send + 'static,
     {
-        self.spawn_fn(move || actor)
-    }
-
-    /// Spawn a normal [`Actor`] in the system, with non-default capacity for its input channel.
-    pub fn spawn_with_capacity<A>(
-        &mut self,
-        actor: A,
-        capacity: usize,
-    ) -> Result<Addr<A>, ActorError>
-    where
-        A: Actor + Send + 'static,
-    {
-        self.spawn_fn_with_capacity(move || actor, capacity)
-    }
-
-    /// Spawn a normal Actor in the system, using a factory that produces an [`Actor`].
-    ///
-    /// This method is useful if your actor does not implement [`Send`], since it can create
-    /// the struct directly within the thread.
-    pub fn spawn_fn<F, A>(&mut self, factory: F) -> Result<Addr<A>, ActorError>
-    where
-        F: FnOnce() -> A + Send + 'static,
-        A: Actor + 'static,
-    {
-        self.spawn_fn_with_capacity(factory, MAX_CHANNEL_BLOAT)
-    }
-
-    /// Spawn a normal Actor in the system, using a factory that produces an [`Actor`],
-    /// with non-default capacity for its input channel. See [`System::spawn_fn()`].
-    pub fn spawn_fn_with_capacity<F, A>(
-        &mut self,
-        factory: F,
-        capacity: usize,
-    ) -> Result<Addr<A>, ActorError>
-    where
-        F: FnOnce() -> A + Send + 'static,
-        A: Actor + 'static,
-    {
-        let addr = Addr::<A>::with_capacity(capacity);
-        self.spawn_fn_with_addr(factory, addr.clone())?;
-        Ok(addr)
+        self.prepare(actor).spawn()
     }
 
     /// Spawn a normal Actor in the system, using a factory that produces an [`Actor`],
     /// and an address that will be assigned to the Actor.
     ///
     /// This method is useful if you need to model circular dependencies between `Actor`s.
-    pub fn spawn_fn_with_addr<F, A>(&mut self, factory: F, addr: Addr<A>) -> Result<(), ActorError>
+    fn spawn_fn_with_addr<F, A>(&mut self, factory: F, addr: Addr<A>) -> Result<(), ActorError>
     where
         F: FnOnce() -> A + Send + 'static,
         A: Actor + 'static,
@@ -267,7 +278,7 @@ impl System {
 
     /// Takes an actor and its address and runs it on the calling thread. This function
     /// will exit once the actor has stopped.
-    pub fn run_on_main<A>(&mut self, mut actor: A, addr: Addr<A>) -> Result<(), ActorError>
+    fn run_on_main<A>(&mut self, mut actor: A, addr: Addr<A>) -> Result<(), ActorError>
     where
         A: Actor,
     {

@@ -481,7 +481,7 @@ fn main() -> Result<(), Error> {
     // The display actor may spawn an OS window which in some cases must run
     // on the main application thread.
     let display_actor = VideoDisplayActor::new();
-    system.run_on_main(display_actor, display_addr)?;
+    system.prepare(display_actor).with_addr(display_addr).run_on_main()?;
 
     Ok(())
 }

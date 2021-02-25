@@ -225,7 +225,7 @@ fn main() -> Result<(), Error> {
 
     // Start creating actors. Because actors "point forward", start with the last one.
     // Set larger message channel capacity for Output actor for some cushion.
-    let output_addr = system.spawn_with_capacity(Output, 60)?;
+    let output_addr = system.prepare(Output).with_capacity(60).spawn()?;
 
     // Create Mixer address explicitly in order to break the circular dependency loop.
     let mixer_addr = Addr::<Mixer>::default();
@@ -237,10 +237,10 @@ fn main() -> Result<(), Error> {
     let delay_addr = system.spawn(Delay::new(damper_addr.recipient()))?;
 
     // We can finally spawn the Mixer. Feeds into Output and Delay effect.
-    system.spawn_fn_with_addr(
-        move || Mixer::new(output_addr.recipient(), delay_addr.recipient()),
-        mixer_addr.clone(),
-    )?;
+    system
+        .prepare_fn(move || Mixer::new(output_addr.recipient(), delay_addr.recipient()))
+        .with_addr(mixer_addr.clone())
+        .spawn()?;
 
     // Input feeds into Mixer.
     let input_addr = system.spawn(Input { next: mixer_addr.recipient() })?;
