@@ -321,7 +321,10 @@ where
                     match msg {
                         Ok(msg) => {
                             trace!("[{}] message received by {}", system_handle.name, A::name());
-                            if let Err(_e) = actor.handle(&context, msg) {
+                            if let Err(err) = actor.handle(&context, msg) {
+                                error!("{} error: {:?}", A::name(), err);
+                                let _ = context.system_handle.shutdown();
+
                                 return Ok(());
                             }
                         },
