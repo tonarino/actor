@@ -43,16 +43,48 @@
 //!
 
 use crossbeam::channel::{self, select, Receiver, SendError, Sender, TrySendError};
-use failure::{bail, err_msg, format_err, Error};
 use log::*;
 use parking_lot::{Mutex, RwLock};
-use std::{ops::Deref, sync::Arc, thread, time::Duration};
+use std::{fmt, ops::Deref, sync::Arc, thread, time::Duration};
 
 #[cfg(test)]
 pub mod testing;
 
 // TODO(jake): make configurable per actor.
 static MAX_CHANNEL_BLOAT: usize = 5;
+
+#[derive(Debug)]
+pub enum ActorError {
+    /// The system has stopped, and a new actor can not be started.
+    SystemStopped { actor_name: &'static str },
+    /// The actor message channel is disconnected.
+    ChannelDisconnected { actor_name: &'static str },
+    /// Failed to spawn an actor thread.
+    SpawnFailed { actor_name: &'static str },
+    /// A panic occurred inside an actor thread.
+    ActorPanic,
+}
+
+impl fmt::Display for ActorError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ActorError::SystemStopped { actor_name } => {
+                write!(f, "The system is not running. The actor {} can not be started.", actor_name)
+            },
+            ActorError::ChannelDisconnected { actor_name } => {
+                write!(f, "The message channel is disconnected for the actor {}.", actor_name)
+            },
+            ActorError::SpawnFailed { actor_name } => {
+                write!(f, "Failed to spawn a thread for the actor {}.", actor_name)
+            },
+            ActorError::ActorPanic => {
+                write!(f, "A panic inside an actor thread. See above for more verbose logs.")
+            },
+        }
+    }
+}
+
+impl std::error::Error for ActorError {}
 
 /// Systems are responsible for keeping track of their spawned actors, and managing
 /// their lifecycles appropriately.
@@ -64,7 +96,7 @@ pub struct System {
     handle: SystemHandle,
 }
 
-type SystemCallback = Box<dyn Fn() -> Result<(), Error> + Send + Sync>;
+type SystemCallback = Box<dyn Fn() -> Result<(), ActorError> + Send + Sync>;
 
 #[derive(Default)]
 pub struct SystemCallbacks {
@@ -128,7 +160,7 @@ impl System {
     }
 
     /// Spawn a normal [`Actor`] in the system.
-    pub fn spawn<A>(&mut self, actor: A) -> Result<Addr<A>, Error>
+    pub fn spawn<A>(&mut self, actor: A) -> Result<Addr<A>, ActorError>
     where
         A: Actor + Send + 'static,
     {
@@ -136,7 +168,11 @@ impl System {
     }
 
     /// Spawn a normal [`Actor`] in the system, with non-default capacity for its input channel.
-    pub fn spawn_with_capacity<A>(&mut self, actor: A, capacity: usize) -> Result<Addr<A>, Error>
+    pub fn spawn_with_capacity<A>(
+        &mut self,
+        actor: A,
+        capacity: usize,
+    ) -> Result<Addr<A>, ActorError>
     where
         A: Actor + Send + 'static,
     {
@@ -147,7 +183,7 @@ impl System {
     ///
     /// This method is useful if your actor does not implement [`Send`], since it can create
     /// the struct directly within the thread.
-    pub fn spawn_fn<F, A>(&mut self, factory: F) -> Result<Addr<A>, Error>
+    pub fn spawn_fn<F, A>(&mut self, factory: F) -> Result<Addr<A>, ActorError>
     where
         F: FnOnce() -> A + Send + 'static,
         A: Actor + 'static,
@@ -161,7 +197,7 @@ impl System {
         &mut self,
         factory: F,
         capacity: usize,
-    ) -> Result<Addr<A>, Error>
+    ) -> Result<Addr<A>, ActorError>
     where
         F: FnOnce() -> A + Send + 'static,
         A: Actor + 'static,
@@ -175,7 +211,7 @@ impl System {
     /// and an address that will be assigned to the Actor.
     ///
     /// This method is useful if you need to model circular dependencies between `Actor`s.
-    pub fn spawn_fn_with_addr<F, A>(&mut self, factory: F, addr: Addr<A>) -> Result<(), Error>
+    pub fn spawn_fn_with_addr<F, A>(&mut self, factory: F, addr: Addr<A>) -> Result<(), ActorError>
     where
         F: FnOnce() -> A + Send + 'static,
         A: Actor + 'static,
@@ -185,10 +221,7 @@ impl System {
         let system_state_lock = self.handle.system_state.read();
         match *system_state_lock {
             SystemState::ShuttingDown | SystemState::Stopped => {
-                return Err(format_err!(
-                    "the system is not running, the actor {} can not be started.",
-                    A::name()
-                ));
+                return Err(ActorError::SystemStopped { actor_name: A::name() });
             },
             SystemState::Running => {},
         }
@@ -197,19 +230,23 @@ impl System {
         let context = Context { system_handle: system_handle.clone(), myself: addr.clone() };
         let control_addr = addr.control_addr();
 
-        let thread_handle = thread::Builder::new().name(A::name().into()).spawn(move || {
-            let mut actor = factory();
+        let thread_handle = thread::Builder::new()
+            .name(A::name().into())
+            .spawn(move || {
+                let mut actor = factory();
 
-            actor.started(&context);
-            debug!("[{}] started actor: {}", system_handle.name, A::name());
+                actor.started(&context);
+                debug!("[{}] started actor: {}", system_handle.name, A::name());
 
-            let actor_result = Self::run_actor_select_loop(actor, addr, &context, &system_handle);
-            if let Err(err) = &actor_result {
-                error!("run_actor_select_loop returned an error: {}", err);
-            }
+                let actor_result =
+                    Self::run_actor_select_loop(actor, addr, &context, &system_handle);
+                if let Err(err) = &actor_result {
+                    error!("run_actor_select_loop returned an error: {}", err);
+                }
 
-            actor_result
-        })?;
+                actor_result
+            })
+            .map_err(|_| ActorError::SpawnFailed { actor_name: A::name() })?;
 
         self.handle
             .registry
@@ -220,7 +257,7 @@ impl System {
     }
 
     /// Block the current thread until the system is shutdown.
-    pub fn run(&mut self) -> Result<(), Error> {
+    pub fn run(&mut self) -> Result<(), ActorError> {
         while *self.system_state.read() != SystemState::Stopped {
             thread::sleep(Duration::from_millis(10));
         }
@@ -230,13 +267,13 @@ impl System {
 
     /// Takes an actor and its address and runs it on the calling thread. This function
     /// will exit once the actor has stopped.
-    pub fn run_on_main<A>(&mut self, mut actor: A, addr: Addr<A>) -> Result<(), Error>
+    pub fn run_on_main<A>(&mut self, mut actor: A, addr: Addr<A>) -> Result<(), ActorError>
     where
         A: Actor,
     {
         // Prevent race condition of spawn and shutdown.
         if !self.is_running() {
-            bail!("the system is not running. the actor {} can not be started.", A::name());
+            return Err(ActorError::SystemStopped { actor_name: A::name() });
         }
 
         let system_handle = &self.handle;
@@ -265,7 +302,7 @@ impl System {
         addr: Addr<A>,
         context: &Context<A>,
         system_handle: &SystemHandle,
-    ) -> Result<(), Error>
+    ) -> Result<(), ActorError>
     where
         A: Actor,
     {
@@ -304,7 +341,7 @@ impl System {
                             }
                         },
                         Err(_) => {
-                            bail!("[{}] message channel empty and disconnected. ending actor thread.", A::name());
+                            return Err(ActorError::ChannelDisconnected{actor_name:A::name()});
                         }
                     }
                 },
@@ -329,7 +366,7 @@ impl Deref for System {
 
 impl SystemHandle {
     /// Stops all actors spawned by this system.
-    pub fn shutdown(&self) -> Result<(), Error> {
+    pub fn shutdown(&self) -> Result<(), ActorError> {
         let current_thread = thread::current();
         let current_thread_name = current_thread.name().unwrap_or("Unknown thread id");
         info!("Thread [{}] shutting down the actor system", current_thread_name);
@@ -420,7 +457,7 @@ impl SystemHandle {
         *self.system_state.write() = SystemState::Stopped;
 
         if err_count > 0 {
-            Err(err_msg("a panic inside an actor thread (see error logs above)"))
+            Err(ActorError::ActorPanic)
         } else {
             Ok(())
         }
@@ -433,7 +470,7 @@ impl SystemHandle {
 
 enum RegistryEntry {
     CurrentThread(ControlAddr),
-    BackgroundThread(ControlAddr, thread::JoinHandle<Result<(), Error>>),
+    BackgroundThread(ControlAddr, thread::JoinHandle<Result<(), ActorError>>),
 }
 
 impl RegistryEntry {
@@ -582,9 +619,6 @@ impl<M> Clone for Recipient<M> {
 impl<M> Recipient<M> {
     /// Non-blocking call to send a message. Use this if you need to react when
     /// the channel is full.
-    // TODO(ryo): Provide a helper trait to convert TrySendError into
-    // failure::Error. This is not straightforward right now, when M does not
-    // implement Send trait.
     pub fn try_send<N: Into<M>>(&self, message: N) -> Result<(), TrySendError<M>> {
         self.message_tx.try_send(message.into())
     }

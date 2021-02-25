@@ -17,8 +17,8 @@
 //!               +--------+              +-------+
 
 use actor::{Actor, Addr, Context, Recipient, System};
+use anyhow::Error;
 use env_logger::Env;
-use failure::Error;
 use log::trace;
 use std::{
     convert::TryInto,
@@ -249,5 +249,5 @@ fn main() -> Result<(), Error> {
     input_addr.try_send(ReadNext)?;
 
     // Let the system run, block until it finishes.
-    system.run()
+    system.run().map_err(Error::from)
 }

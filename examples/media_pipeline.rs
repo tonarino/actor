@@ -1,7 +1,7 @@
 use crate::actors::*;
 use actor::{Addr, System, SystemCallbacks};
+use anyhow::Error;
 use env_logger::Env;
-use failure::Error;
 
 /// A simplistic representation of a MediaFrame, they just hold frame counters.
 pub enum MediaFrame {
@@ -18,7 +18,7 @@ pub enum EncodedMediaFrame {
 mod actors {
     use crate::{EncodedMediaFrame, MediaFrame};
     use actor::{Actor, Context, Recipient};
-    use failure::{bail, Error};
+    use anyhow::{bail, Error};
     use std::{thread, time::Duration};
 
     // Messages

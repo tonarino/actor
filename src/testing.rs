@@ -1,6 +1,4 @@
-use std::{thread, time::Duration};
-
-use failure::Error;
+use std::{fmt, thread, time::Duration};
 
 use crate::System;
 
@@ -20,9 +18,9 @@ pub struct SystemThread {
 }
 
 impl SystemThread {
-    pub fn run_for<F>(duration: Duration, func: F) -> Self
+    pub fn run_for<F, E: fmt::Debug>(duration: Duration, func: F) -> Self
     where
-        F: FnOnce(&mut System) -> Result<(), Error> + Send + 'static,
+        F: FnOnce(&mut System) -> Result<(), E> + Send + 'static,
     {
         Self {
             inner: Some(thread::spawn(move || {
