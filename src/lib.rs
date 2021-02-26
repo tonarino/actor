@@ -176,9 +176,10 @@ impl<'a, A: 'static + Actor> SpawnBuilder<'a, A> {
         self.system.spawn_fn_with_addr(factory, addr.clone()).map(move |_| addr)
     }
 
-    /// Block on this Actor, running it on the current calling thread.
-    /// This function will exit when the Actor has stopped.
-    pub fn run(self) -> Result<(), ActorError> {
+    /// Run this Actor on the current calling thread. This is a
+    /// blocking call. This function will exit when the Actor
+    /// has stopped.
+    pub fn run_and_block(self) -> Result<(), ActorError> {
         let factory = self.factory;
         let capacity = self.capacity.unwrap_or(MAX_CHANNEL_BLOAT);
         let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
