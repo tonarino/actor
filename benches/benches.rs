@@ -42,7 +42,7 @@ fn make_chain(num_actors: usize) -> (System, Addr<ChainLink>, Addr<ChainLink>) {
 
 fn run_chain((mut system, start, end): (System, Addr<ChainLink>, Addr<ChainLink>)) {
     start.send(true).unwrap();
-    system.prepare(ChainLink { next: None }).with_addr(end).run_on_main().unwrap();
+    system.prepare(ChainLink { next: None }).with_addr(end).run().unwrap();
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
