@@ -143,6 +143,11 @@ pub struct Context<A: Actor + ?Sized> {
     pub myself: Addr<A>,
 }
 
+/// A builder for specifying how to spawn an [`Actor`].
+/// You can specify your own [`Addr`] for the Actor,
+/// the capacity of the Actor's inbox, and you can specify
+/// whether to spawn the Actor into its own thread or block
+/// on the current calling thread.
 #[must_use = "You must call .spawn() or .block_on() to run this actor"]
 pub struct SpawnBuilder<'a, A: Actor> {
     system: &'a mut System,
@@ -152,14 +157,17 @@ pub struct SpawnBuilder<'a, A: Actor> {
 }
 
 impl<'a, A: 'static + Actor> SpawnBuilder<'a, A> {
+    /// Specify a capacity for the actor's receiving channel.
     pub fn with_capacity(self, capacity: usize) -> Self {
         Self { capacity: Some(capacity), ..self }
     }
 
+    /// Specify an existing [`Addr`] to use with this Actor.
     pub fn with_addr(self, addr: Addr<A>) -> Self {
         Self { addr: Some(addr), ..self }
     }
 
+    /// Spawn this Actor into a new thread managed by the [`System`].
     pub fn spawn(self) -> Result<Addr<A>, ActorError> {
         let factory = self.factory;
         let capacity = self.capacity.unwrap_or(MAX_CHANNEL_BLOAT);
@@ -168,6 +176,8 @@ impl<'a, A: 'static + Actor> SpawnBuilder<'a, A> {
         self.system.spawn_fn_with_addr(factory, addr.clone()).map(move |_| addr)
     }
 
+    /// Block on this Actor, running it on the current calling thread.
+    /// This function will exit when the Actor has stopped.
     pub fn block_on(self) -> Result<(), ActorError> {
         let factory = self.factory;
         let capacity = self.capacity.unwrap_or(MAX_CHANNEL_BLOAT);
@@ -193,7 +203,8 @@ impl System {
         }
     }
 
-    /// TODO(bschwind) - Add documentation
+    /// Prepare an actor to be spawned. Returns a [`SpawnBuilder`]
+    /// which can be used to customize the spawning of the actor.
     pub fn prepare<A>(&mut self, actor: A) -> SpawnBuilder<A>
     where
         A: Actor + Send + 'static,
@@ -201,7 +212,11 @@ impl System {
         SpawnBuilder { system: self, capacity: None, addr: None, factory: Box::new(move || actor) }
     }
 
-    /// TODO(bschwind) - Add documentation
+    /// Similar to `prepare`, but an actor factory is passed instead
+    /// of an [`Actor`] itself. This is used when an actor needs to be
+    /// created on its own thread instead of the calling thread.
+    /// Returns a [`SpawnBuilder`] which can be used to customize the
+    /// spawning of the actor.
     pub fn prepare_fn<A, F>(&mut self, factory: F) -> SpawnBuilder<A>
     where
         A: Actor + Send + 'static,
@@ -210,7 +225,7 @@ impl System {
         SpawnBuilder { system: self, capacity: None, addr: None, factory: Box::new(factory) }
     }
 
-    /// Spawn a normal [`Actor`] in the system.
+    /// Spawn a normal [`Actor`] in the system, returning its address when successful.
     pub fn spawn<A>(&mut self, actor: A) -> Result<Addr<A>, ActorError>
     where
         A: Actor + Send + 'static,
