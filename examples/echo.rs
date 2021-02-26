@@ -96,10 +96,10 @@ impl Actor for Input {
         trace!("[Input] decoded chunk: {:?}...", &chunk[..5]);
 
         // Send the parsed chunk to the next actor.
-        self.next.try_send(DryChunk(chunk))?;
+        self.next.send(DryChunk(chunk))?;
 
         // Trigger a loop to read the next chunk.
-        context.myself.try_send(ReadNext).map_err(Error::from)
+        context.myself.send(ReadNext).map_err(Error::from)
     }
 }
 
@@ -191,8 +191,8 @@ impl Actor for Mixer {
                 .collect();
             let mixed: Chunk = mixed_slice.try_into().expect("sample count is correct");
 
-            self.out_1.try_send(Arc::clone(&mixed))?;
-            self.out_2.try_send(mixed)?;
+            self.out_1.send(Arc::clone(&mixed))?;
+            self.out_2.send(mixed)?;
 
             self.dry_buffer = None;
             self.wet_buffer = None;
@@ -231,7 +231,7 @@ impl Actor for Delay {
         self.index = (self.index + 1) % self.buffer.len();
 
         // Send out the least recent chunk.
-        self.next.try_send(WetChunk(Arc::clone(&self.buffer[self.index]))).map_err(Error::from)
+        self.next.send(WetChunk(Arc::clone(&self.buffer[self.index]))).map_err(Error::from)
     }
 }
 
@@ -254,7 +254,7 @@ impl Actor for Damper {
         let chunk: Chunk = chunk_slice.try_into().expect("sample count is correct");
 
         // Pass it right on.
-        self.next.try_send(WetChunk(chunk)).map_err(Error::from)
+        self.next.send(WetChunk(chunk)).map_err(Error::from)
     }
 }
 
@@ -286,7 +286,7 @@ fn main() -> Result<(), Error> {
     let input_addr = system.spawn(Input { next: mixer_addr.recipient() })?;
 
     // Kick off the pipeline.
-    input_addr.try_send(ReadNext)?;
+    input_addr.send(ReadNext)?;
 
     // Let the system run, block until it finishes.
     system.run().map_err(Error::from)
