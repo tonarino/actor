@@ -143,7 +143,7 @@ pub struct Context<A: Actor + ?Sized> {
     pub myself: Addr<A>,
 }
 
-#[must_use = "You must call .spawn() or .run_on_main() to run this actor"]
+#[must_use = "You must call .spawn() or .block_on() to run this actor"]
 pub struct SpawnBuilder<'a, A: Actor> {
     system: &'a mut System,
     capacity: Option<usize>,
@@ -168,12 +168,12 @@ impl<'a, A: 'static + Actor> SpawnBuilder<'a, A> {
         self.system.spawn_fn_with_addr(factory, addr.clone()).map(move |_| addr)
     }
 
-    pub fn run_on_main(self) -> Result<(), ActorError> {
+    pub fn block_on(self) -> Result<(), ActorError> {
         let factory = self.factory;
         let capacity = self.capacity.unwrap_or(MAX_CHANNEL_BLOAT);
         let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
 
-        self.system.run_on_main(factory(), addr)
+        self.system.block_on(factory(), addr)
     }
 }
 
@@ -278,7 +278,7 @@ impl System {
 
     /// Takes an actor and its address and runs it on the calling thread. This function
     /// will exit once the actor has stopped.
-    fn run_on_main<A>(&mut self, mut actor: A, addr: Addr<A>) -> Result<(), ActorError>
+    fn block_on<A>(&mut self, mut actor: A, addr: Addr<A>) -> Result<(), ActorError>
     where
         A: Actor,
     {
