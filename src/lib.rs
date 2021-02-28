@@ -1,13 +1,12 @@
 #![warn(clippy::all)]
 
 //! This crate aims to provide a minimalist and high-performance actor framework
-//! for Rust with *significantly* less complexity than other frameworks like
+//! for Rust with significantly less complexity than other frameworks like
 //! [Actix](https://docs.rs/actix/).
 //!
 //! In this framework, each `Actor` is its own OS-level thread. This makes debugging
-//! significantly simpler, and in systems with a number of actors similar to the number
-//! of available cores, should mean better performance due to less overhead and fewer
-//! context switches.
+//! noticeably simpler, and is suitable performance-wise when the number of CPU
+//! threads approaches the number of workhorse actors.
 //!
 //! # Example
 //! ```rust
