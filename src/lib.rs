@@ -99,12 +99,24 @@ impl fmt::Display for SendError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SendError::Full => write!(f, "The channel's capacity is full."),
-            SendError::Disconnected => write!(f, "The recipient of the message no longer exists."),
+            SendError::Disconnected => DisconnectedError.fmt(f),
         }
     }
 }
 
 impl std::error::Error for SendError {}
+
+/// The actor message channel is disconnected.
+#[derive(Debug)]
+pub struct DisconnectedError;
+
+impl fmt::Display for DisconnectedError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "The recipient of the message no longer exists.")
+    }
+}
+
+impl std::error::Error for DisconnectedError {}
 
 impl<M> From<channel::TrySendError<M>> for SendError {
     fn from(orig: channel::TrySendError<M>) -> Self {
@@ -284,7 +296,7 @@ impl System {
 
         let system_handle = self.handle.clone();
         let context = Context { system_handle: system_handle.clone(), myself: addr.clone() };
-        let control_addr = addr.control_addr();
+        let control_addr = addr.control_tx.clone();
 
         let thread_handle = thread::Builder::new()
             .name(A::name().into())
@@ -335,8 +347,7 @@ impl System {
         let system_handle = &self.handle;
         let context = Context { system_handle: system_handle.clone(), myself: addr.clone() };
 
-        let control_addr = addr.control_addr();
-        self.handle.registry.lock().push(RegistryEntry::CurrentThread(control_addr));
+        self.handle.registry.lock().push(RegistryEntry::CurrentThread(addr.control_tx.clone()));
 
         actor.started(&context);
         debug!("[{}] started actor: {}", system_handle.name, A::name());
@@ -459,7 +470,7 @@ impl SystemHandle {
                 .filter_map(|(i, mut entry)| {
                     let actor_name = entry.name();
 
-                    if let Err(e) = entry.control_addr().stop() {
+                    if let Err(e) = entry.control_addr().send(Control::Stop) {
                         warn!("control channel is closed: {} ({})", actor_name, e);
                     }
 
@@ -518,8 +529,8 @@ impl SystemHandle {
 }
 
 enum RegistryEntry {
-    CurrentThread(ControlAddr),
-    BackgroundThread(ControlAddr, thread::JoinHandle<Result<(), ActorError>>),
+    CurrentThread(Sender<Control>),
+    BackgroundThread(Sender<Control>, thread::JoinHandle<Result<(), ActorError>>),
 }
 
 impl RegistryEntry {
@@ -534,7 +545,7 @@ impl RegistryEntry {
         }
     }
 
-    fn control_addr(&mut self) -> &mut ControlAddr {
+    fn control_addr(&mut self) -> &mut Sender<Control> {
         match self {
             RegistryEntry::CurrentThread(control_addr) => control_addr,
             RegistryEntry::BackgroundThread(control_addr, _) => control_addr,
@@ -612,11 +623,7 @@ impl<A: Actor> Addr<A> {
         let (control_tx, control_rx) = channel::bounded(MAX_CHANNEL_BLOAT);
 
         let message_tx = Arc::new(message_tx);
-        Self {
-            recipient: Recipient { actor_name: A::name().into(), message_tx, control_tx },
-            message_rx,
-            control_rx,
-        }
+        Self { recipient: Recipient { message_tx, control_tx }, message_rx, control_rx }
     }
 
     /// "Genericize" an address to, rather than point to a specific actor,
@@ -624,7 +631,6 @@ impl<A: Actor> Addr<A> {
     /// Allows you to create recipient not only of `A::Message`, but of any `M: Into<A::Message>`.
     pub fn recipient<M: Into<A::Message>>(&self) -> Recipient<M> {
         Recipient {
-            actor_name: A::name().into(),
             // Each level of boxing adds one .into() call, so box here to convert A::Message to M.
             message_tx: Arc::new(self.recipient.message_tx.clone()),
             control_tx: self.recipient.control_tx.clone(),
@@ -635,7 +641,6 @@ impl<A: Actor> Addr<A> {
 /// Similar to [`Addr`], but rather than pointing to a specific actor,
 /// it is typed for any actor that handles a given message-response type.
 pub struct Recipient<M> {
-    actor_name: String,
     message_tx: Arc<dyn SenderTrait<M>>,
     control_tx: Sender<Control>,
 }
@@ -644,62 +649,45 @@ pub struct Recipient<M> {
 // https://github.com/rust-lang/rust/issues/26925
 impl<M> Clone for Recipient<M> {
     fn clone(&self) -> Self {
-        Self {
-            actor_name: self.actor_name.clone(),
-            message_tx: self.message_tx.clone(),
-            control_tx: self.control_tx.clone(),
-        }
+        Self { message_tx: self.message_tx.clone(), control_tx: self.control_tx.clone() }
     }
 }
 
 impl<M> Recipient<M> {
     /// Non-blocking call to send a message. Use this if you need to react when
-    /// the channel is full.
-    pub fn try_send(&self, message: M) -> Result<(), SendError> {
+    /// the channel is full. See [`SendResultExt`] trait for convenient handling of errors.
+    pub fn send(&self, message: M) -> Result<(), SendError> {
         self.message_tx.try_send(message).map_err(SendError::from)
     }
 
-    /// Non-blocking call to send a message. Use this if there is nothing you can
-    /// do when the channel is full. The method still logs a warning for you in
-    /// that case.
-    pub fn send(&self, message: M) -> Result<(), SendError> {
-        let result = self.try_send(message);
-        if let Err(SendError::Full) = &result {
-            trace!("[{}] dropped message (channel bloat)", self.actor_name);
-            return Ok(());
-        }
-        result
-    }
-
-    /// Non-blocking call to send a message. Use this if you do not care if
-    /// messages are being dropped.
-    pub fn send_quiet(&self, message: M) {
-        let _ = self.try_send(message);
-    }
-
-    /// Non-blocking call to send a message. Use if you expect the channel to be
-    /// frequently full (slow consumer), but would still like to be notified if a
-    /// different error occurs (e.g. disconnection).
-    pub fn send_if_not_full(&self, message: M) -> Result<(), SendError> {
-        if self.remaining_capacity().unwrap_or(usize::max_value()) > 1 {
-            return self.send(message);
-        }
-
-        Ok(())
-    }
-
-    pub fn stop(&self) -> Result<(), SendError> {
-        self.control_tx.send(Control::Stop).map_err(|_| SendError::Disconnected)
-    }
-
-    // TODO(ryo): Properly support the concept of priority channels.
+    /// The remaining capacity for the message channel.
     pub fn remaining_capacity(&self) -> Option<usize> {
         let message_tx = &self.message_tx as &dyn SenderTrait<M>;
         message_tx.capacity().map(|capacity| capacity - message_tx.len())
     }
+}
 
-    pub fn control_addr(&self) -> ControlAddr {
-        ControlAddr { control_tx: self.control_tx.clone() }
+pub trait SendResultExt {
+    /// Don't return an `Err` when the recipient is at full capacity, run `func` in such a case instead.
+    fn on_full<F: FnOnce()>(self, func: F) -> Result<(), DisconnectedError>;
+
+    /// Don't return an `Err` when the recipient is at full capacity.
+    fn ignore_on_full(self) -> Result<(), DisconnectedError>;
+}
+
+impl SendResultExt for Result<(), SendError> {
+    fn on_full<F: FnOnce()>(self, callback: F) -> Result<(), DisconnectedError> {
+        self.or_else(|e| match e {
+            SendError::Full => {
+                callback();
+                Ok(())
+            },
+            _ => Err(DisconnectedError),
+        })
+    }
+
+    fn ignore_on_full(self) -> Result<(), DisconnectedError> {
+        self.on_full(|| ())
     }
 }
 
@@ -739,18 +727,6 @@ impl<M: Into<N>, N> SenderTrait<M> for Arc<dyn SenderTrait<N>> {
 
     fn capacity(&self) -> Option<usize> {
         self.deref().capacity()
-    }
-}
-
-/// An address to an actor that can *only* handle lifecycle control.
-#[derive(Clone)]
-pub struct ControlAddr {
-    control_tx: Sender<Control>,
-}
-
-impl ControlAddr {
-    pub fn stop(&self) -> Result<(), channel::SendError<Control>> {
-        self.control_tx.send(Control::Stop)
     }
 }
 
