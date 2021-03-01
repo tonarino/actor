@@ -1,6 +1,6 @@
 [package]
-name = "actor"
-version = "0.2.0"
+name = "tonari-actor"
+version = "0.3.0"
 authors = ["Jake McGinty <me@jake.su>", "Matěj Laitl <matej@laitl.com>"]
 license = "MIT"
 edition = "2018"

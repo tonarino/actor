@@ -16,7 +16,6 @@
 //!               | Delay  <--------------+ Damper |
 //!               +--------+              +--------+
 
-use actor::{Actor, Addr, Context, Recipient, System};
 use anyhow::Error;
 use env_logger::Env;
 use log::trace;
@@ -26,6 +25,7 @@ use std::{
     iter::repeat,
     sync::Arc,
 };
+use tonari_actor::{Actor, Addr, Context, Recipient, System};
 
 /// One audio sample. Defaults of pacat are --format=s16ne (signed 16bit) and --chanels=2 (stereo).
 type Sample = [i16; 2];

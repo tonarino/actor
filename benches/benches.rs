@@ -1,6 +1,6 @@
-use actor::{Actor, Addr, Context, System};
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 use std::time::Duration;
+use tonari_actor::{Actor, Addr, Context, System};
 
 struct ChainLink {
     next: Addr<ChainLink>,
