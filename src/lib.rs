@@ -99,7 +99,7 @@ impl fmt::Display for SendError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SendError::Full => write!(f, "The channel's capacity is full."),
-            SendError::Disconnected => DisconnectedError {}.fmt(f),
+            SendError::Disconnected => DisconnectedError.fmt(f),
         }
     }
 }
@@ -108,7 +108,7 @@ impl std::error::Error for SendError {}
 
 /// The actor message channel is disconnected.
 #[derive(Debug)]
-pub struct DisconnectedError {}
+pub struct DisconnectedError;
 
 impl fmt::Display for DisconnectedError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -669,24 +669,24 @@ impl<M> Recipient<M> {
 
 pub trait SendResultExt {
     /// Don't return an `Err` when the recipient is at full capacity, run `func` in such a case instead.
-    fn on_full<F: FnOnce()>(self, func: F) -> Self;
+    fn on_full<F: FnOnce()>(self, func: F) -> Result<(), DisconnectedError>;
 
     /// Don't return an `Err` when the recipient is at full capacity.
-    fn ignore_on_full(self) -> Self;
+    fn ignore_on_full(self) -> Result<(), DisconnectedError>;
 }
 
 impl SendResultExt for Result<(), SendError> {
-    fn on_full<F: FnOnce()>(self, callback: F) -> Self {
+    fn on_full<F: FnOnce()>(self, callback: F) -> Result<(), DisconnectedError> {
         self.or_else(|e| match e {
             SendError::Full => {
                 callback();
                 Ok(())
             },
-            _ => Err(e),
+            _ => Err(DisconnectedError),
         })
     }
 
-    fn ignore_on_full(self) -> Self {
+    fn ignore_on_full(self) -> Result<(), DisconnectedError> {
         self.on_full(|| ())
     }
 }
