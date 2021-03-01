@@ -5,8 +5,8 @@
 //! [Actix](https://docs.rs/actix/).
 //!
 //! In this framework, each `Actor` is its own OS-level thread. This makes debugging
-//! noticeably simpler, and is suitable performance-wise when the number of CPU
-//! threads approaches the number of workhorse actors.
+//! noticeably simpler, and is suitably performant when the number of actors
+//! is less than or equal to the number of CPU threads.
 //!
 //! # Example
 //! ```rust
