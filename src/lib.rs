@@ -118,7 +118,6 @@ impl fmt::Display for DisconnectedError {
 
 impl std::error::Error for DisconnectedError {}
 
-
 impl<M> From<channel::TrySendError<M>> for SendError {
     fn from(orig: channel::TrySendError<M>) -> Self {
         match orig {
