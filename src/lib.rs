@@ -284,7 +284,7 @@ impl System {
 
         let system_handle = self.handle.clone();
         let context = Context { system_handle: system_handle.clone(), myself: addr.clone() };
-        let control_addr = ControlAddr::from(&addr.control_tx);
+        let control_addr = addr.control_tx.clone();
 
         let thread_handle = thread::Builder::new()
             .name(A::name().into())
@@ -335,8 +335,7 @@ impl System {
         let system_handle = &self.handle;
         let context = Context { system_handle: system_handle.clone(), myself: addr.clone() };
 
-        let control_addr = ControlAddr::from(&addr.control_tx);
-        self.handle.registry.lock().push(RegistryEntry::CurrentThread(control_addr));
+        self.handle.registry.lock().push(RegistryEntry::CurrentThread(addr.control_tx.clone()));
 
         actor.started(&context);
         debug!("[{}] started actor: {}", system_handle.name, A::name());
@@ -459,7 +458,7 @@ impl SystemHandle {
                 .filter_map(|(i, mut entry)| {
                     let actor_name = entry.name();
 
-                    if let Err(e) = entry.control_addr().stop() {
+                    if let Err(e) = entry.control_addr().send(Control::Stop) {
                         warn!("control channel is closed: {} ({})", actor_name, e);
                     }
 
@@ -518,8 +517,8 @@ impl SystemHandle {
 }
 
 enum RegistryEntry {
-    CurrentThread(ControlAddr),
-    BackgroundThread(ControlAddr, thread::JoinHandle<Result<(), ActorError>>),
+    CurrentThread(Sender<Control>),
+    BackgroundThread(Sender<Control>, thread::JoinHandle<Result<(), ActorError>>),
 }
 
 impl RegistryEntry {
@@ -534,7 +533,7 @@ impl RegistryEntry {
         }
     }
 
-    fn control_addr(&mut self) -> &mut ControlAddr {
+    fn control_addr(&mut self) -> &mut Sender<Control> {
         match self {
             RegistryEntry::CurrentThread(control_addr) => control_addr,
             RegistryEntry::BackgroundThread(control_addr, _) => control_addr,
@@ -721,24 +720,6 @@ impl<M: Into<N>, N> SenderTrait<M> for Arc<dyn SenderTrait<N>> {
 
     fn capacity(&self) -> Option<usize> {
         self.deref().capacity()
-    }
-}
-
-/// An address to an actor that can *only* handle lifecycle control.
-#[derive(Clone)]
-struct ControlAddr {
-    control_tx: Sender<Control>,
-}
-
-impl From<&Sender<Control>> for ControlAddr {
-    fn from(control_tx: &Sender<Control>) -> Self {
-        ControlAddr { control_tx: control_tx.clone() }
-    }
-}
-
-impl ControlAddr {
-    pub fn stop(&self) -> Result<(), channel::SendError<Control>> {
-        self.control_tx.send(Control::Stop)
     }
 }
 
