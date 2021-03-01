@@ -662,20 +662,15 @@ impl<M> Recipient<M> {
 }
 
 trait SendResultExt {
-    /// Don't return an `Err` when the recipient is at full capacity, instead running this closure log statement.
-    fn on_full<F>(self, func: F) -> Self
-    where
-        F: FnOnce();
+    /// Don't return an `Err` when the recipient is at full capacity, run `func` in such a case instead.
+    fn on_full<F: FnOnce()>(self, func: F) -> Self;
 
     /// Don't return an `Err` when the recipient is at full capacity.
     fn ignore_on_full(self) -> Self;
 }
 
 impl SendResultExt for Result<(), SendError> {
-    fn on_full<F>(self, callback: F) -> Self
-    where
-        F: FnOnce(),
-    {
+    fn on_full<F: FnOnce()>(self, callback: F) -> Self {
         self.or_else(|e| match e {
             SendError::Full => {
                 callback();
@@ -686,10 +681,7 @@ impl SendResultExt for Result<(), SendError> {
     }
 
     fn ignore_on_full(self) -> Self {
-        self.or_else(|e| match e {
-            SendError::Full { .. } => Ok(()),
-            _ => Err(e),
-        })
+        self.on_full(|| ())
     }
 }
 
@@ -734,11 +726,11 @@ impl<M: Into<N>, N> SenderTrait<M> for Arc<dyn SenderTrait<N>> {
 
 /// An address to an actor that can *only* handle lifecycle control.
 #[derive(Clone)]
-pub struct ControlAddr {
+struct ControlAddr {
     control_tx: Sender<Control>,
 }
 
-impl<'a> From<&'a Sender<Control>> for ControlAddr {
+impl From<&Sender<Control>> for ControlAddr {
     fn from(control_tx: &Sender<Control>) -> Self {
         ControlAddr { control_tx: control_tx.clone() }
     }
