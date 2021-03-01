@@ -99,12 +99,25 @@ impl fmt::Display for SendError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SendError::Full => write!(f, "The channel's capacity is full."),
-            SendError::Disconnected => write!(f, "The recipient of the message no longer exists."),
+            SendError::Disconnected => DisconnectedError {}.fmt(f),
         }
     }
 }
 
 impl std::error::Error for SendError {}
+
+/// The actor message channel is disconnected.
+#[derive(Debug)]
+pub struct DisconnectedError {}
+
+impl fmt::Display for DisconnectedError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "The recipient of the message no longer exists.")
+    }
+}
+
+impl std::error::Error for DisconnectedError {}
+
 
 impl<M> From<channel::TrySendError<M>> for SendError {
     fn from(orig: channel::TrySendError<M>) -> Self {
@@ -643,14 +656,14 @@ impl<M> Clone for Recipient<M> {
 
 impl<M> Recipient<M> {
     /// Non-blocking call to send a message. Use this if you need to react when
-    /// the channel is full.
+    /// the channel is full. See [`SendResultExt`] trait for convenient handling of errors.
     pub fn send(&self, message: M) -> Result<(), SendError> {
         self.message_tx.try_send(message).map_err(SendError::from)
     }
 
     /// Notify the receiving actor to stop running.
-    pub fn stop(&self) -> Result<(), SendError> {
-        self.control_tx.send(Control::Stop).map_err(|_| SendError::Disconnected)
+    pub fn stop(&self) -> Result<(), DisconnectedError> {
+        self.control_tx.send(Control::Stop).map_err(|_| DisconnectedError {})
     }
 
     /// The remaining capacity for the message channel.
@@ -660,7 +673,7 @@ impl<M> Recipient<M> {
     }
 }
 
-trait SendResultExt {
+pub trait SendResultExt {
     /// Don't return an `Err` when the recipient is at full capacity, run `func` in such a case instead.
     fn on_full<F: FnOnce()>(self, func: F) -> Self;
 
