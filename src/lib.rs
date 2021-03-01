@@ -10,7 +10,7 @@
 //!
 //! # Example
 //! ```rust
-//! use actor::{Actor, Context, System};
+//! use tonari_actor::{Actor, Context, System};
 //!
 //! struct TestActor {}
 //! impl Actor for TestActor {
