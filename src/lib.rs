@@ -660,11 +660,6 @@ impl<M> Recipient<M> {
         self.message_tx.try_send(message).map_err(SendError::from)
     }
 
-    /// Notify the receiving actor to stop running.
-    pub fn stop(&self) -> Result<(), DisconnectedError> {
-        self.control_tx.send(Control::Stop).map_err(|_| DisconnectedError {})
-    }
-
     /// The remaining capacity for the message channel.
     pub fn remaining_capacity(&self) -> Option<usize> {
         let message_tx = &self.message_tx as &dyn SenderTrait<M>;
