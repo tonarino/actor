@@ -1,9 +1,14 @@
 [package]
-name = "actor"
-version = "0.2.0"
-authors = ["Jake McGinty <me@jake.su>", "Matěj Laitl <matej@laitl.com>"]
+name = "tonari-actor"
+description = "A minimalist actor framework aiming for high performance and simplicity."
+version = "0.3.0"
+authors = ["Jake McGinty <me@jake.su>", "Matěj Laitl <matej@laitl.com>", "Ryo Kawaguchi <ryo@kawagu.ch>", "Brian Schwind <brianmschwind@gmail.com>"]
 license = "MIT"
 edition = "2018"
+repository = "https://github.com/tonarino/actor"
+homepage = "https://github.com/tonarino/actor"
+readme = "README.md"
+keywords = ["actor", "threads"]
 
 [dependencies]
 crossbeam-channel = "0.5"
