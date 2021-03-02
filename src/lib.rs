@@ -260,7 +260,7 @@ impl System {
     /// created on its own thread instead of the calling thread.
     /// Returns a [`SpawnBuilder`] which can be used to customize the
     /// spawning of the actor.
-    pub fn prepare_fn<A, F>(&mut self, factory: F) -> SpawnBuilder<A, impl FnOnce() -> A>
+    pub fn prepare_fn<A, F>(&mut self, factory: F) -> SpawnBuilder<A, F>
     where
         A: Actor + 'static,
         F: FnOnce() -> A + Send + 'static,
