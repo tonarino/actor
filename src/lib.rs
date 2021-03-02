@@ -183,6 +183,29 @@ pub struct Context<A: Actor + ?Sized> {
     pub myself: Addr<A>,
 }
 
+enum Factory<A: Actor> {
+    Function(Box<dyn FnOnce() -> A + Send + 'static>),
+    Actor(A),
+}
+
+impl<A: Actor> Factory<A> {
+    fn into_actor(self) -> A {
+        match self {
+            Self::Function(f) => f(),
+            Self::Actor(a) => a,
+        }
+    }
+
+    fn into_function(self) -> Box<dyn FnOnce() -> A + Send + 'static> {
+        match self {
+            Self::Function(f) => f,
+            _ => unimplemented!(
+                "type magic to make this work correctly when A is Send, but not require it??"
+            ),
+        }
+    }
+}
+
 /// A builder for specifying how to spawn an [`Actor`].
 /// You can specify your own [`Addr`] for the Actor,
 /// the capacity of the Actor's inbox, and you can specify
@@ -193,7 +216,7 @@ pub struct SpawnBuilder<'a, A: Actor> {
     system: &'a mut System,
     capacity: Option<usize>,
     addr: Option<Addr<A>>,
-    factory: Box<dyn FnOnce() -> A + Send + 'static>,
+    factory: Factory<A>,
 }
 
 impl<'a, A: 'static + Actor> SpawnBuilder<'a, A> {
@@ -207,15 +230,6 @@ impl<'a, A: 'static + Actor> SpawnBuilder<'a, A> {
         Self { addr: Some(addr), ..self }
     }
 
-    /// Spawn this Actor into a new thread managed by the [`System`].
-    pub fn spawn(self) -> Result<Addr<A>, ActorError> {
-        let factory = self.factory;
-        let capacity = self.capacity.unwrap_or(MAX_CHANNEL_BLOAT);
-        let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
-
-        self.system.spawn_fn_with_addr(factory, addr.clone()).map(move |_| addr)
-    }
-
     /// Run this Actor on the current calling thread. This is a
     /// blocking call. This function will exit when the Actor
     /// has stopped.
@@ -224,7 +238,16 @@ impl<'a, A: 'static + Actor> SpawnBuilder<'a, A> {
         let capacity = self.capacity.unwrap_or(MAX_CHANNEL_BLOAT);
         let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
 
-        self.system.block_on(factory(), addr)
+        self.system.block_on(factory.into_actor(), addr)
+    }
+
+    /// Spawn this Actor into a new thread managed by the [`System`].
+    pub fn spawn(self) -> Result<Addr<A>, ActorError> {
+        let factory = self.factory;
+        let capacity = self.capacity.unwrap_or(MAX_CHANNEL_BLOAT);
+        let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
+
+        self.system.spawn_fn_with_addr(factory.into_function(), addr.clone()).map(move |_| addr)
     }
 }
 
@@ -248,9 +271,9 @@ impl System {
     /// which can be used to customize the spawning of the actor.
     pub fn prepare<A>(&mut self, actor: A) -> SpawnBuilder<A>
     where
-        A: Actor + Send + 'static,
+        A: Actor + 'static,
     {
-        SpawnBuilder { system: self, capacity: None, addr: None, factory: Box::new(move || actor) }
+        SpawnBuilder { system: self, capacity: None, addr: None, factory: Factory::Actor(actor) }
     }
 
     /// Similar to `prepare`, but an actor factory is passed instead
@@ -260,10 +283,15 @@ impl System {
     /// spawning of the actor.
     pub fn prepare_fn<A, F>(&mut self, factory: F) -> SpawnBuilder<A>
     where
-        A: Actor + Send + 'static,
+        A: Actor + 'static,
         F: FnOnce() -> A + Send + 'static,
     {
-        SpawnBuilder { system: self, capacity: None, addr: None, factory: Box::new(factory) }
+        SpawnBuilder {
+            system: self,
+            capacity: None,
+            addr: None,
+            factory: Factory::Function(Box::new(factory)),
+        }
     }
 
     /// Spawn a normal [`Actor`] in the system, returning its address when successful.
