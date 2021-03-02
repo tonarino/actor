@@ -733,11 +733,11 @@ impl<M: Into<N>, N> SenderTrait<M> for Arc<dyn SenderTrait<N>> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{rc::Rc, time::Duration};
 
     use super::*;
 
-    struct TestActor {}
+    struct TestActor;
     impl Actor for TestActor {
         type Error = ();
         type Message = usize;
@@ -764,11 +764,11 @@ mod tests {
     #[test]
     fn it_works() {
         let mut system = System::new("hi");
-        let address = system.spawn(TestActor {}).unwrap();
-        let _ = system.spawn(TestActor {}).unwrap();
-        let _ = system.spawn(TestActor {}).unwrap();
-        let _ = system.spawn(TestActor {}).unwrap();
-        let _ = system.spawn(TestActor {}).unwrap();
+        let address = system.spawn(TestActor).unwrap();
+        let _ = system.spawn(TestActor).unwrap();
+        let _ = system.spawn(TestActor).unwrap();
+        let _ = system.spawn(TestActor).unwrap();
+        let _ = system.spawn(TestActor).unwrap();
         address.send(1337usize).unwrap();
         address.send(666usize).unwrap();
         address.send(1usize).unwrap();
@@ -776,5 +776,38 @@ mod tests {
 
         system.shutdown().unwrap();
         thread::sleep(Duration::from_millis(100));
+    }
+
+    #[test]
+    fn send_constraints() {
+        #[derive(Default)]
+        struct LocalActor(Rc<()>);
+        impl Actor for LocalActor {
+            type Error = ();
+            type Message = ();
+
+            fn name() -> &'static str {
+                "LocalActor"
+            }
+
+            fn handle(&mut self, _: &Context<Self>, _: ()) -> Result<(), ()> {
+                Ok(())
+            }
+
+            /// We just need this test to compile, not run.
+            fn started(&mut self, ctx: &Context<Self>) {
+                ctx.system_handle.shutdown().unwrap();
+            }
+        }
+
+        let mut system = System::new("main");
+
+        // Allowable, as the struct will be created on the new thread.
+        let _ = system.prepare_fn(LocalActor::default).spawn().unwrap();
+
+        // Allowable, as the struct will be run on the current thread.
+        let _ = system.prepare(LocalActor::default()).run_and_block().unwrap();
+
+        system.shutdown().unwrap();
     }
 }
