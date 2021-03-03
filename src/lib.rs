@@ -49,8 +49,8 @@ use std::{fmt, ops::Deref, sync::Arc, thread, time::Duration};
 #[cfg(test)]
 pub mod testing;
 
-// TODO(jake): make configurable per actor.
-static MAX_CHANNEL_BLOAT: usize = 5;
+// Default capacity for channels unless overridden by `.with_capacity()`.
+static DEFAULT_CHANNEL_CAPACITY: usize = 5;
 
 #[derive(Debug)]
 pub enum ActorError {
@@ -212,7 +212,7 @@ impl<'a, A: 'static + Actor, F: FnOnce() -> A> SpawnBuilder<'a, A, F> {
     /// has stopped.
     pub fn run_and_block(self) -> Result<(), ActorError> {
         let factory = self.factory;
-        let capacity = self.capacity.unwrap_or(MAX_CHANNEL_BLOAT);
+        let capacity = self.capacity.unwrap_or(DEFAULT_CHANNEL_CAPACITY);
         let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
 
         self.system.block_on(factory(), addr)
@@ -223,7 +223,7 @@ impl<'a, A: 'static + Actor, F: FnOnce() -> A + Send + 'static> SpawnBuilder<'a,
     /// Spawn this Actor into a new thread managed by the [`System`].
     pub fn spawn(self) -> Result<Addr<A>, ActorError> {
         let factory = self.factory;
-        let capacity = self.capacity.unwrap_or(MAX_CHANNEL_BLOAT);
+        let capacity = self.capacity.unwrap_or(DEFAULT_CHANNEL_CAPACITY);
         let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
 
         self.system.spawn_fn_with_addr(factory, addr.clone()).map(move |_| addr)
@@ -593,7 +593,7 @@ pub struct Addr<A: Actor + ?Sized> {
 
 impl<A: Actor> Default for Addr<A> {
     fn default() -> Self {
-        Self::with_capacity(MAX_CHANNEL_BLOAT)
+        Self::with_capacity(DEFAULT_CHANNEL_CAPACITY)
     }
 }
 
@@ -621,7 +621,7 @@ where
 impl<A: Actor> Addr<A> {
     pub fn with_capacity(capacity: usize) -> Self {
         let (message_tx, message_rx) = channel::bounded::<A::Message>(capacity);
-        let (control_tx, control_rx) = channel::bounded(MAX_CHANNEL_BLOAT);
+        let (control_tx, control_rx) = channel::bounded(DEFAULT_CHANNEL_CAPACITY);
 
         let message_tx = Arc::new(message_tx);
         Self { recipient: Recipient { message_tx, control_tx }, message_rx, control_rx }
