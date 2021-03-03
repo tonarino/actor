@@ -193,7 +193,7 @@ pub struct SpawnBuilder<'a, A: Actor, F: FnOnce() -> A> {
     system: &'a mut System,
     capacity: Option<usize>,
     addr: Option<Addr<A>>,
-    factory: Box<F>,
+    factory: F,
 }
 
 impl<'a, A: 'static + Actor, F: FnOnce() -> A> SpawnBuilder<'a, A, F> {
@@ -265,7 +265,7 @@ impl System {
         A: Actor + 'static,
         F: FnOnce() -> A + Send + 'static,
     {
-        SpawnBuilder { system: self, capacity: None, addr: None, factory: Box::new(factory) }
+        SpawnBuilder { system: self, capacity: None, addr: None, factory }
     }
 
     /// Spawn a normal [`Actor`] in the system, returning its address when successful.
