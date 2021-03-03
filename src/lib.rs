@@ -189,14 +189,14 @@ pub struct Context<A: Actor + ?Sized> {
 /// whether to spawn the Actor into its own thread or block
 /// on the current calling thread.
 #[must_use = "You must call .spawn() or .block_on() to run this actor"]
-pub struct SpawnBuilder<'a, A: Actor> {
+pub struct SpawnBuilder<'a, A: Actor, F: FnOnce() -> A> {
     system: &'a mut System,
     capacity: Option<usize>,
     addr: Option<Addr<A>>,
-    factory: Box<dyn FnOnce() -> A + Send + 'static>,
+    factory: F,
 }
 
-impl<'a, A: 'static + Actor> SpawnBuilder<'a, A> {
+impl<'a, A: 'static + Actor, F: FnOnce() -> A> SpawnBuilder<'a, A, F> {
     /// Specify a capacity for the actor's receiving channel.
     pub fn with_capacity(self, capacity: usize) -> Self {
         Self { capacity: Some(capacity), ..self }
@@ -205,15 +205,6 @@ impl<'a, A: 'static + Actor> SpawnBuilder<'a, A> {
     /// Specify an existing [`Addr`] to use with this Actor.
     pub fn with_addr(self, addr: Addr<A>) -> Self {
         Self { addr: Some(addr), ..self }
-    }
-
-    /// Spawn this Actor into a new thread managed by the [`System`].
-    pub fn spawn(self) -> Result<Addr<A>, ActorError> {
-        let factory = self.factory;
-        let capacity = self.capacity.unwrap_or(MAX_CHANNEL_BLOAT);
-        let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
-
-        self.system.spawn_fn_with_addr(factory, addr.clone()).map(move |_| addr)
     }
 
     /// Run this Actor on the current calling thread. This is a
@@ -225,6 +216,17 @@ impl<'a, A: 'static + Actor> SpawnBuilder<'a, A> {
         let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
 
         self.system.block_on(factory(), addr)
+    }
+}
+
+impl<'a, A: 'static + Actor, F: FnOnce() -> A + Send + 'static> SpawnBuilder<'a, A, F> {
+    /// Spawn this Actor into a new thread managed by the [`System`].
+    pub fn spawn(self) -> Result<Addr<A>, ActorError> {
+        let factory = self.factory;
+        let capacity = self.capacity.unwrap_or(MAX_CHANNEL_BLOAT);
+        let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
+
+        self.system.spawn_fn_with_addr(factory, addr.clone()).map(move |_| addr)
     }
 }
 
@@ -246,9 +248,9 @@ impl System {
 
     /// Prepare an actor to be spawned. Returns a [`SpawnBuilder`]
     /// which can be used to customize the spawning of the actor.
-    pub fn prepare<A>(&mut self, actor: A) -> SpawnBuilder<A>
+    pub fn prepare<A>(&mut self, actor: A) -> SpawnBuilder<A, impl FnOnce() -> A>
     where
-        A: Actor + Send + 'static,
+        A: Actor + 'static,
     {
         SpawnBuilder { system: self, capacity: None, addr: None, factory: Box::new(move || actor) }
     }
@@ -258,12 +260,12 @@ impl System {
     /// created on its own thread instead of the calling thread.
     /// Returns a [`SpawnBuilder`] which can be used to customize the
     /// spawning of the actor.
-    pub fn prepare_fn<A, F>(&mut self, factory: F) -> SpawnBuilder<A>
+    pub fn prepare_fn<A, F>(&mut self, factory: F) -> SpawnBuilder<A, F>
     where
-        A: Actor + Send + 'static,
+        A: Actor + 'static,
         F: FnOnce() -> A + Send + 'static,
     {
-        SpawnBuilder { system: self, capacity: None, addr: None, factory: Box::new(factory) }
+        SpawnBuilder { system: self, capacity: None, addr: None, factory }
     }
 
     /// Spawn a normal [`Actor`] in the system, returning its address when successful.
@@ -731,11 +733,11 @@ impl<M: Into<N>, N> SenderTrait<M> for Arc<dyn SenderTrait<N>> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{rc::Rc, time::Duration};
 
     use super::*;
 
-    struct TestActor {}
+    struct TestActor;
     impl Actor for TestActor {
         type Error = ();
         type Message = usize;
@@ -762,11 +764,11 @@ mod tests {
     #[test]
     fn it_works() {
         let mut system = System::new("hi");
-        let address = system.spawn(TestActor {}).unwrap();
-        let _ = system.spawn(TestActor {}).unwrap();
-        let _ = system.spawn(TestActor {}).unwrap();
-        let _ = system.spawn(TestActor {}).unwrap();
-        let _ = system.spawn(TestActor {}).unwrap();
+        let address = system.spawn(TestActor).unwrap();
+        let _ = system.spawn(TestActor).unwrap();
+        let _ = system.spawn(TestActor).unwrap();
+        let _ = system.spawn(TestActor).unwrap();
+        let _ = system.spawn(TestActor).unwrap();
         address.send(1337usize).unwrap();
         address.send(666usize).unwrap();
         address.send(1usize).unwrap();
@@ -774,5 +776,38 @@ mod tests {
 
         system.shutdown().unwrap();
         thread::sleep(Duration::from_millis(100));
+    }
+
+    #[test]
+    fn send_constraints() {
+        #[derive(Default)]
+        struct LocalActor(Rc<()>);
+        impl Actor for LocalActor {
+            type Error = ();
+            type Message = ();
+
+            fn name() -> &'static str {
+                "LocalActor"
+            }
+
+            fn handle(&mut self, _: &Context<Self>, _: ()) -> Result<(), ()> {
+                Ok(())
+            }
+
+            /// We just need this test to compile, not run.
+            fn started(&mut self, ctx: &Context<Self>) {
+                ctx.system_handle.shutdown().unwrap();
+            }
+        }
+
+        let mut system = System::new("main");
+
+        // Allowable, as the struct will be created on the new thread.
+        let _ = system.prepare_fn(LocalActor::default).spawn().unwrap();
+
+        // Allowable, as the struct will be run on the current thread.
+        let _ = system.prepare(LocalActor::default()).run_and_block().unwrap();
+
+        system.shutdown().unwrap();
     }
 }
