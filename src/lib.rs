@@ -252,7 +252,7 @@ impl System {
     where
         A: Actor + 'static,
     {
-        SpawnBuilder { system: self, capacity: None, addr: None, factory: Box::new(move || actor) }
+        SpawnBuilder { system: self, capacity: None, addr: None, factory: move || actor }
     }
 
     /// Similar to `prepare`, but an actor factory is passed instead
