@@ -779,6 +779,20 @@ mod tests {
     }
 
     #[test]
+    fn test_ignore_on_full() {
+        let mut system = System::new("hi");
+        let address = system.prepare(TestActor).with_capacity(1).spawn().unwrap();
+        address.send(1337usize).unwrap();
+        assert!(address.send(666usize).is_err());
+        address.send(666usize).ignore_on_full().unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+
+        system.shutdown().unwrap();
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    #[test]
     fn send_constraints() {
         #[derive(Default)]
         struct LocalActor(Rc<()>);
