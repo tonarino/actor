@@ -21,7 +21,7 @@
 //!         "TestActor"
 //!     }
 //!
-//!     fn handle(&mut self, _context: &Context<Self>, message: Self::Message) -> Result<(), ()> {
+//!     fn handle(&mut self, _context: &mut Context<Self>, message: Self::Message) -> Result<(), ()> {
 //!         println!("message: {}", message);
 //!
 //!         Ok(())
@@ -296,7 +296,7 @@ impl System {
         }
 
         let system_handle = self.handle.clone();
-        let context = Context { system_handle: system_handle.clone(), myself: addr.clone() };
+        let mut context = Context { system_handle: system_handle.clone(), myself: addr.clone() };
         let control_addr = addr.control_tx.clone();
 
         let thread_handle = thread::Builder::new()
@@ -304,11 +304,11 @@ impl System {
             .spawn(move || {
                 let mut actor = factory();
 
-                actor.started(&context);
+                actor.started(&mut context);
                 debug!("[{}] started actor: {}", system_handle.name, A::name());
 
                 let actor_result =
-                    Self::run_actor_select_loop(actor, addr, &context, &system_handle);
+                    Self::run_actor_select_loop(actor, addr, &mut context, &system_handle);
                 if let Err(err) = &actor_result {
                     error!("run_actor_select_loop returned an error: {}", err);
                 }
@@ -346,13 +346,13 @@ impl System {
         }
 
         let system_handle = &self.handle;
-        let context = Context { system_handle: system_handle.clone(), myself: addr.clone() };
+        let mut context = Context { system_handle: system_handle.clone(), myself: addr.clone() };
 
         self.handle.registry.lock().push(RegistryEntry::CurrentThread(addr.control_tx.clone()));
 
-        actor.started(&context);
+        actor.started(&mut context);
         debug!("[{}] started actor: {}", system_handle.name, A::name());
-        Self::run_actor_select_loop(actor, addr, &context, system_handle)?;
+        Self::run_actor_select_loop(actor, addr, &mut context, system_handle)?;
 
         // Wait for the system to shutdown before we exit, otherwise the process
         // would exit before the system is completely shutdown
@@ -368,7 +368,7 @@ impl System {
     fn run_actor_select_loop<A>(
         mut actor: A,
         addr: Addr<A>,
-        context: &Context<A>,
+        context: &mut Context<A>,
         system_handle: &SystemHandle,
     ) -> Result<(), ActorError>
     where
@@ -379,7 +379,7 @@ impl System {
                 recv(addr.control_rx) -> msg => {
                     match msg {
                         Ok(Control::Stop) => {
-                            actor.stopped(&context);
+                            actor.stopped(context);
                             debug!("[{}] stopped actor: {}", system_handle.name, A::name());
                             return Ok(());
                         },
@@ -394,7 +394,7 @@ impl System {
                     match msg {
                         Ok(msg) => {
                             trace!("[{}] message received by {}", system_handle.name, A::name());
-                            if let Err(err) = actor.handle(&context, msg) {
+                            if let Err(err) = actor.handle(context, msg) {
                                 error!("{} error: {:?}", A::name(), err);
                                 let _ = context.system_handle.shutdown();
 
@@ -571,7 +571,7 @@ pub trait Actor {
     /// The primary function of this trait, allowing an actor to handle incoming messages of a certain type.
     fn handle(
         &mut self,
-        context: &Context<Self>,
+        context: &mut Context<Self>,
         message: Self::Message,
     ) -> Result<(), Self::Error>;
 
@@ -579,10 +579,10 @@ pub trait Actor {
     fn name() -> &'static str;
 
     /// An optional callback when the Actor has been started.
-    fn started(&mut self, _context: &Context<Self>) {}
+    fn started(&mut self, _context: &mut Context<Self>) {}
 
     /// An optional callback when the Actor has been stopped.
-    fn stopped(&mut self, _context: &Context<Self>) {}
+    fn stopped(&mut self, _context: &mut Context<Self>) {}
 }
 
 pub struct Addr<A: Actor + ?Sized> {
@@ -746,17 +746,17 @@ mod tests {
             "TestActor"
         }
 
-        fn handle(&mut self, _: &Context<Self>, message: usize) -> Result<(), ()> {
+        fn handle(&mut self, _: &mut Context<Self>, message: usize) -> Result<(), ()> {
             println!("message: {}", message);
 
             Ok(())
         }
 
-        fn started(&mut self, _: &Context<Self>) {
+        fn started(&mut self, _: &mut Context<Self>) {
             println!("started");
         }
 
-        fn stopped(&mut self, _: &Context<Self>) {
+        fn stopped(&mut self, _: &mut Context<Self>) {
             println!("stopped");
         }
     }
@@ -804,12 +804,12 @@ mod tests {
                 "LocalActor"
             }
 
-            fn handle(&mut self, _: &Context<Self>, _: ()) -> Result<(), ()> {
+            fn handle(&mut self, _: &mut Context<Self>, _: ()) -> Result<(), ()> {
                 Ok(())
             }
 
             /// We just need this test to compile, not run.
-            fn started(&mut self, ctx: &Context<Self>) {
+            fn started(&mut self, ctx: &mut Context<Self>) {
                 ctx.system_handle.shutdown().unwrap();
             }
         }
