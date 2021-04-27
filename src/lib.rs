@@ -42,9 +42,14 @@
 //!
 
 use crossbeam_channel::{self as channel, select, Receiver, Sender};
+use hierarchical_hash_wheel_timer::{
+    thread_timer::{TimerRef, TimerWithThread},
+    ClosureTimer, OneShotClosureState, PeriodicClosureState, TimerReturn,
+};
 use log::*;
 use parking_lot::{Mutex, RwLock};
 use std::{fmt, ops::Deref, sync::Arc, thread, time::Duration};
+use uuid::Uuid;
 
 #[cfg(test)]
 pub mod testing;
@@ -131,9 +136,9 @@ impl<M> From<channel::TrySendError<M>> for SendError {
 ///
 /// You may run multiple systems in the same application, each system being responsible
 /// for its own pool of actors.
-#[derive(Default)]
 pub struct System {
     handle: SystemHandle,
+    timer_thread: TimerWithThread<Uuid, OneShotClosureState<Uuid>, PeriodicClosureState<Uuid>>,
 }
 
 type SystemCallback = Box<dyn Fn() -> Result<(), ActorError> + Send + Sync>;
@@ -181,6 +186,7 @@ pub struct SystemHandle {
 pub struct Context<A: Actor + ?Sized> {
     pub system_handle: SystemHandle,
     pub myself: Addr<A>,
+    pub timer_ref: TimerRef<Uuid, OneShotClosureState<Uuid>, PeriodicClosureState<Uuid>>,
 }
 
 /// A builder for specifying how to spawn an [`Actor`].
@@ -237,12 +243,15 @@ impl System {
     }
 
     pub fn with_callbacks(name: &str, callbacks: SystemCallbacks) -> Self {
+        let timer_thread = TimerWithThread::for_uuid_closures();
+
         Self {
             handle: SystemHandle {
                 name: name.to_owned(),
                 callbacks: Arc::new(callbacks),
                 ..SystemHandle::default()
             },
+            timer_thread,
         }
     }
 
@@ -276,6 +285,26 @@ impl System {
         self.prepare(actor).spawn()
     }
 
+    pub fn test_timers(&mut self) {
+        let mut timer = self.timer_thread.timer_ref();
+
+        let id = Uuid::new_v4();
+        timer.schedule_action_once(id, Duration::from_millis(500), move |_| {
+            println!("Run once!");
+        });
+
+        let id = Uuid::new_v4();
+        timer.schedule_action_periodic(
+            id,
+            Duration::from_secs(0),
+            Duration::from_secs(1),
+            move |_| {
+                println!("Running forever!");
+                TimerReturn::Reschedule(())
+            },
+        );
+    }
+
     /// Spawn a normal Actor in the system, using a factory that produces an [`Actor`],
     /// and an address that will be assigned to the Actor.
     ///
@@ -296,7 +325,10 @@ impl System {
         }
 
         let system_handle = self.handle.clone();
-        let context = Context { system_handle: system_handle.clone(), myself: addr.clone() };
+        let timer_ref = self.timer_thread.timer_ref();
+
+        let context =
+            Context { system_handle: system_handle.clone(), myself: addr.clone(), timer_ref };
         let control_addr = addr.control_tx.clone();
 
         let thread_handle = thread::Builder::new()
@@ -346,7 +378,10 @@ impl System {
         }
 
         let system_handle = &self.handle;
-        let context = Context { system_handle: system_handle.clone(), myself: addr.clone() };
+        let timer_ref = self.timer_thread.timer_ref();
+
+        let context =
+            Context { system_handle: system_handle.clone(), myself: addr.clone(), timer_ref };
 
         self.handle.registry.lock().push(RegistryEntry::CurrentThread(addr.control_tx.clone()));
 
