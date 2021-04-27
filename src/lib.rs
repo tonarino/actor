@@ -44,7 +44,7 @@
 use crossbeam_channel::{self as channel, select, Receiver, Sender};
 use hierarchical_hash_wheel_timer::{
     thread_timer::{TimerRef, TimerWithThread},
-    ClosureTimer, OneShotClosureState, PeriodicClosureState, TimerReturn,
+    ClosureTimer, OneShotClosureState, PeriodicClosureState, Timer, TimerReturn,
 };
 use log::*;
 use parking_lot::{Mutex, RwLock};
@@ -186,7 +186,28 @@ pub struct SystemHandle {
 pub struct Context<A: Actor + ?Sized> {
     pub system_handle: SystemHandle,
     pub myself: Addr<A>,
-    pub timer_ref: TimerRef<Uuid, OneShotClosureState<Uuid>, PeriodicClosureState<Uuid>>,
+    timer: TimerRef<Uuid, OneShotClosureState<Uuid>, PeriodicClosureState<Uuid>>,
+}
+
+impl<A: Actor + ?Sized> Context<A> {
+    pub fn run_once<F>(&mut self, delay: Duration, callback: F) -> ScheduleToken
+    where
+        F: FnOnce(ScheduleToken) + Send + 'static,
+    {
+        run_once(&mut self.timer, delay, callback)
+    }
+
+    pub fn run_periodically<F>(
+        &mut self,
+        delay: Duration,
+        interval: Duration,
+        callback: F,
+    ) -> ScheduleToken
+    where
+        F: FnMut(ScheduleToken) -> TimerControlFlow + Send + 'static,
+    {
+        run_periodically(&mut self.timer, delay, interval, callback)
+    }
 }
 
 /// A builder for specifying how to spawn an [`Actor`].
@@ -234,6 +255,55 @@ impl<'a, A: 'static + Actor, F: FnOnce() -> A + Send + 'static> SpawnBuilder<'a,
 
         self.system.spawn_fn_with_addr(factory, addr.clone()).map(move |_| addr)
     }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct ScheduleToken {
+    uuid: Uuid,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TimerControlFlow {
+    Continue,
+    Cancel,
+}
+
+fn run_once<F>(
+    timer: &mut TimerRef<Uuid, OneShotClosureState<Uuid>, PeriodicClosureState<Uuid>>,
+    delay: Duration,
+    callback: F,
+) -> ScheduleToken
+where
+    F: FnOnce(ScheduleToken) + Send + 'static,
+{
+    let id = Uuid::new_v4();
+
+    timer.schedule_action_once(id, delay, move |id| {
+        callback(ScheduleToken { uuid: id });
+    });
+
+    ScheduleToken { uuid: id }
+}
+
+fn run_periodically<F>(
+    timer: &mut TimerRef<Uuid, OneShotClosureState<Uuid>, PeriodicClosureState<Uuid>>,
+    delay: Duration,
+    interval: Duration,
+    mut callback: F,
+) -> ScheduleToken
+where
+    F: FnMut(ScheduleToken) -> TimerControlFlow + Send + 'static,
+{
+    let id = Uuid::new_v4();
+
+    timer.schedule_action_periodic(id, delay, interval, move |id| {
+        match callback(ScheduleToken { uuid: id }) {
+            TimerControlFlow::Continue => TimerReturn::Reschedule(()),
+            TimerControlFlow::Cancel => TimerReturn::Cancel,
+        }
+    });
+
+    ScheduleToken { uuid: id }
 }
 
 impl System {
@@ -285,24 +355,29 @@ impl System {
         self.prepare(actor).spawn()
     }
 
-    pub fn test_timers(&mut self) {
+    pub fn run_once<F>(&mut self, delay: Duration, callback: F) -> ScheduleToken
+    where
+        F: FnOnce(ScheduleToken) + Send + 'static,
+    {
+        run_once(&mut self.timer_thread.timer_ref(), delay, callback)
+    }
+
+    pub fn run_periodically<F>(
+        &mut self,
+        delay: Duration,
+        interval: Duration,
+        callback: F,
+    ) -> ScheduleToken
+    where
+        F: FnMut(ScheduleToken) -> TimerControlFlow + Send + 'static,
+    {
+        run_periodically(&mut self.timer_thread.timer_ref(), delay, interval, callback)
+    }
+
+    pub fn cancel_timer(&mut self, schedule_token: ScheduleToken) {
         let mut timer = self.timer_thread.timer_ref();
 
-        let id = Uuid::new_v4();
-        timer.schedule_action_once(id, Duration::from_millis(500), move |_| {
-            println!("Run once!");
-        });
-
-        let id = Uuid::new_v4();
-        timer.schedule_action_periodic(
-            id,
-            Duration::from_secs(0),
-            Duration::from_secs(1),
-            move |_| {
-                println!("Running forever!");
-                TimerReturn::Reschedule(())
-            },
-        );
+        timer.cancel(&schedule_token.uuid);
     }
 
     /// Spawn a normal Actor in the system, using a factory that produces an [`Actor`],
@@ -327,8 +402,11 @@ impl System {
         let system_handle = self.handle.clone();
         let timer_ref = self.timer_thread.timer_ref();
 
-        let context =
-            Context { system_handle: system_handle.clone(), myself: addr.clone(), timer_ref };
+        let mut context = Context {
+            system_handle: system_handle.clone(),
+            myself: addr.clone(),
+            timer: timer_ref,
+        };
         let control_addr = addr.control_tx.clone();
 
         let thread_handle = thread::Builder::new()
@@ -336,11 +414,11 @@ impl System {
             .spawn(move || {
                 let mut actor = factory();
 
-                actor.started(&context);
+                actor.started(&mut context);
                 debug!("[{}] started actor: {}", system_handle.name, A::name());
 
                 let actor_result =
-                    Self::run_actor_select_loop(actor, addr, &context, &system_handle);
+                    Self::run_actor_select_loop(actor, addr, &mut context, &system_handle);
                 if let Err(err) = &actor_result {
                     error!("run_actor_select_loop returned an error: {}", err);
                 }
@@ -380,14 +458,17 @@ impl System {
         let system_handle = &self.handle;
         let timer_ref = self.timer_thread.timer_ref();
 
-        let context =
-            Context { system_handle: system_handle.clone(), myself: addr.clone(), timer_ref };
+        let mut context = Context {
+            system_handle: system_handle.clone(),
+            myself: addr.clone(),
+            timer: timer_ref,
+        };
 
         self.handle.registry.lock().push(RegistryEntry::CurrentThread(addr.control_tx.clone()));
 
-        actor.started(&context);
+        actor.started(&mut context);
         debug!("[{}] started actor: {}", system_handle.name, A::name());
-        Self::run_actor_select_loop(actor, addr, &context, system_handle)?;
+        Self::run_actor_select_loop(actor, addr, &mut context, system_handle)?;
 
         // Wait for the system to shutdown before we exit, otherwise the process
         // would exit before the system is completely shutdown
@@ -403,7 +484,7 @@ impl System {
     fn run_actor_select_loop<A>(
         mut actor: A,
         addr: Addr<A>,
-        context: &Context<A>,
+        context: &mut Context<A>,
         system_handle: &SystemHandle,
     ) -> Result<(), ActorError>
     where
@@ -429,7 +510,7 @@ impl System {
                     match msg {
                         Ok(msg) => {
                             trace!("[{}] message received by {}", system_handle.name, A::name());
-                            if let Err(err) = actor.handle(&context, msg) {
+                            if let Err(err) = actor.handle(context, msg) {
                                 error!("{} error: {:?}", A::name(), err);
                                 let _ = context.system_handle.shutdown();
 
@@ -606,7 +687,7 @@ pub trait Actor {
     /// The primary function of this trait, allowing an actor to handle incoming messages of a certain type.
     fn handle(
         &mut self,
-        context: &Context<Self>,
+        context: &mut Context<Self>,
         message: Self::Message,
     ) -> Result<(), Self::Error>;
 
@@ -614,7 +695,7 @@ pub trait Actor {
     fn name() -> &'static str;
 
     /// An optional callback when the Actor has been started.
-    fn started(&mut self, _context: &Context<Self>) {}
+    fn started(&mut self, _context: &mut Context<Self>) {}
 
     /// An optional callback when the Actor has been stopped.
     fn stopped(&mut self, _context: &Context<Self>) {}
@@ -781,13 +862,13 @@ mod tests {
             "TestActor"
         }
 
-        fn handle(&mut self, _: &Context<Self>, message: usize) -> Result<(), ()> {
+        fn handle(&mut self, _: &mut Context<Self>, message: usize) -> Result<(), ()> {
             println!("message: {}", message);
 
             Ok(())
         }
 
-        fn started(&mut self, _: &Context<Self>) {
+        fn started(&mut self, _: &mut Context<Self>) {
             println!("started");
         }
 
@@ -839,12 +920,12 @@ mod tests {
                 "LocalActor"
             }
 
-            fn handle(&mut self, _: &Context<Self>, _: ()) -> Result<(), ()> {
+            fn handle(&mut self, _: &mut Context<Self>, _: ()) -> Result<(), ()> {
                 Ok(())
             }
 
             /// We just need this test to compile, not run.
-            fn started(&mut self, ctx: &Context<Self>) {
+            fn started(&mut self, ctx: &mut Context<Self>) {
                 ctx.system_handle.shutdown().unwrap();
             }
         }
