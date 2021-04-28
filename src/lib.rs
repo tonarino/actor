@@ -21,7 +21,7 @@
 //!         "TestActor"
 //!     }
 //!
-//!     fn handle(&mut self, _context: &Context<Self>, message: Self::Message) -> Result<(), ()> {
+//!     fn handle(&mut self, _context: &mut Context<Self>, message: Self::Message) -> Result<(), ()> {
 //!         println!("message: {}", message);
 //!
 //!         Ok(())
@@ -495,7 +495,7 @@ impl System {
                 recv(addr.control_rx) -> msg => {
                     match msg {
                         Ok(Control::Stop) => {
-                            actor.stopped(&context);
+                            actor.stopped(context);
                             debug!("[{}] stopped actor: {}", system_handle.name, A::name());
                             return Ok(());
                         },
@@ -698,7 +698,7 @@ pub trait Actor {
     fn started(&mut self, _context: &mut Context<Self>) {}
 
     /// An optional callback when the Actor has been stopped.
-    fn stopped(&mut self, _context: &Context<Self>) {}
+    fn stopped(&mut self, _context: &mut Context<Self>) {}
 }
 
 pub struct Addr<A: Actor + ?Sized> {
@@ -872,7 +872,7 @@ mod tests {
             println!("started");
         }
 
-        fn stopped(&mut self, _: &Context<Self>) {
+        fn stopped(&mut self, _: &mut Context<Self>) {
             println!("stopped");
         }
     }
@@ -926,6 +926,7 @@ mod tests {
 
             /// We just need this test to compile, not run.
             fn started(&mut self, ctx: &mut Context<Self>) {
+                std::thread::sleep(std::time::Duration::from_millis(100));
                 ctx.system_handle.shutdown().unwrap();
             }
         }
