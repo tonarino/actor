@@ -206,6 +206,15 @@ impl<A: Actor + ?Sized> Context<A> {
     {
         run_recurring(&mut self.timer, delay, interval, callback)
     }
+
+    pub fn cancel_timer(&mut self, schedule_token: ScheduleToken) {
+        self.timer.cancel(schedule_token);
+    }
+
+    pub fn shutdown(&mut self) -> Result<(), ActorError> {
+        self.timer.shutdown();
+        self.system_handle.shutdown()
+    }
 }
 
 /// A builder for specifying how to spawn an [`Actor`].
@@ -481,7 +490,7 @@ impl System {
                             trace!("[{}] message received by {}", system_handle.name, A::name());
                             if let Err(err) = actor.handle(context, msg) {
                                 error!("{} error: {:?}", A::name(), err);
-                                let _ = context.system_handle.shutdown();
+                                let _ = context.shutdown();
 
                                 return Ok(());
                             }
@@ -498,7 +507,6 @@ impl System {
 
 impl Drop for System {
     fn drop(&mut self) {
-        // TODO(bschwind) - Shut down the timer thread
         self.shutdown().unwrap();
     }
 }
@@ -513,7 +521,7 @@ impl Deref for System {
 
 impl SystemHandle {
     /// Stops all actors spawned by this system.
-    pub fn shutdown(&self) -> Result<(), ActorError> {
+    fn shutdown(&self) -> Result<(), ActorError> {
         let current_thread = thread::current();
         let current_thread_name = current_thread.name().unwrap_or("Unknown thread id");
         info!("Thread [{}] shutting down the actor system", current_thread_name);
@@ -897,7 +905,7 @@ mod tests {
             /// We just need this test to compile, not run.
             fn started(&mut self, ctx: &mut Context<Self>) {
                 std::thread::sleep(std::time::Duration::from_millis(100));
-                ctx.system_handle.shutdown().unwrap();
+                ctx.shutdown().unwrap();
             }
         }
 

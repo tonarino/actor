@@ -97,6 +97,10 @@ impl TimerRef {
     pub fn cancel(&mut self, schedule_token: ScheduleToken) {
         let _ = self.thread_tx.send(ThreadMessage::Cancel(schedule_token));
     }
+
+    pub(crate) fn shutdown(&mut self) {
+        let _ = self.thread_tx.send(ThreadMessage::Shutdown);
+    }
 }
 
 impl TimerHandle {

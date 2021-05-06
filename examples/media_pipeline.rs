@@ -46,7 +46,7 @@ mod actors {
             context: &mut Context<Self>,
             _msg: Self::Message,
         ) -> Result<(), Self::Error> {
-            context.system_handle.shutdown().expect("ShutdownActor failed to shutdown system");
+            context.shutdown().expect("ShutdownActor failed to shutdown system");
             Ok(())
         }
     }
@@ -414,7 +414,7 @@ mod actors {
                         println!(
                             "We've received 360 video frames, shutting down the actor system!"
                         );
-                        let _ = context.system_handle.shutdown();
+                        let _ = context.shutdown();
                     }
                 },
                 MediaFrame::Audio(_) => {
