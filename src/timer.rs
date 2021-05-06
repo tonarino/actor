@@ -109,9 +109,12 @@ impl TimerHandle {
 
         let mut timer_thread = TimerThread::new(timer_resolution, thread_rx);
 
-        let join_handle = std::thread::spawn(move || {
-            timer_thread.run();
-        });
+        let join_handle = std::thread::Builder::new()
+            .name("TonariActorTimer".to_string())
+            .spawn(move || {
+                timer_thread.run();
+            })
+            .expect("Couldn't spawn tonari actor timer thread");
 
         let timer_ref = TimerRef { thread_tx };
 
