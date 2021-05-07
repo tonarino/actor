@@ -1,7 +1,7 @@
 use anyhow::Error;
 use env_logger::Env;
 use std::time::{Duration, Instant};
-use tonari_actor::{timer::TimerControlFlow, Actor, Context, System};
+use tonari_actor::{Actor, Context, System};
 
 #[derive(Debug)]
 enum TimerMessage {
@@ -28,22 +28,10 @@ impl Actor for TimerExampleActor {
     }
 
     fn started(&mut self, context: &mut Context<Self>) {
-        let myself = context.myself.clone();
+        context.send_once_to_self(Duration::from_millis(1500), TimerMessage::Once);
 
-        context.run_once(Duration::from_millis(1500), move |_| {
-            if let Err(e) = myself.send(TimerMessage::Once) {
-                println!("Error sending TimerMessage::Once message: {}", e);
-            }
-        });
-
-        let myself = context.myself.clone();
-
-        context.run_recurring(Duration::from_secs(0), Duration::from_secs(1), move |_| {
-            if let Err(e) = myself.send(TimerMessage::Periodic) {
-                println!("Error sending TimerMessage::Periodic message: {}", e);
-            }
-
-            TimerControlFlow::Continue
+        context.send_recurring_to_self(Duration::from_secs(0), Duration::from_secs(1), || {
+            TimerMessage::Periodic
         });
     }
 

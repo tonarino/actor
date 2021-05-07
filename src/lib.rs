@@ -41,7 +41,7 @@
 //! ```
 //!
 
-use crate::timer::{ScheduleToken, TimerControlFlow, TimerHandle, TimerRef};
+use crate::timer::{TimerHandle, TimerRef};
 use crossbeam_channel::{self as channel, select, Receiver, Sender};
 use log::*;
 use parking_lot::{Mutex, RwLock};
@@ -50,7 +50,9 @@ use std::{fmt, ops::Deref, sync::Arc, thread, time::Duration};
 #[cfg(test)]
 pub mod testing;
 
-pub mod timer;
+mod timer;
+
+pub use timer::ScheduleToken;
 
 // Default capacity for channels unless overridden by `.with_capacity()`.
 static DEFAULT_CHANNEL_CAPACITY: usize = 5;
@@ -188,23 +190,54 @@ pub struct Context<A: Actor + ?Sized> {
 }
 
 impl<A: Actor + ?Sized> Context<A> {
-    pub fn run_once<F>(&mut self, delay: Duration, callback: F) -> ScheduleToken
-    where
-        F: FnOnce(ScheduleToken) + Send + 'static,
-    {
-        run_once(&mut self.timer, delay, callback)
+    pub fn send_once_to_self(&mut self, delay: Duration, msg: A::Message) -> ScheduleToken {
+        self.send_once_to::<A>(delay, msg, self.myself.recipient.clone())
     }
 
-    pub fn run_recurring<F>(
+    pub fn send_once_to<R: Actor + ?Sized>(
+        &mut self,
+        delay: Duration,
+        msg: R::Message,
+        recipient: Recipient<R::Message>,
+    ) -> ScheduleToken {
+        run_once(&mut self.timer, delay, move |_| {
+            if let Err(e) = recipient.send(msg) {
+                warn!("Error in send_once_to: {}", e);
+            }
+        })
+    }
+
+    pub fn send_recurring_to_self<F: 'static>(
         &mut self,
         delay: Duration,
         interval: Duration,
-        callback: F,
+        msg_producer: F,
+    ) where
+        F: FnMut() -> A::Message + Send,
+    {
+        self.send_recurring_to::<F, A>(
+            delay,
+            interval,
+            msg_producer,
+            self.myself.recipient.clone(),
+        );
+    }
+
+    pub fn send_recurring_to<F: 'static, R: Actor + ?Sized>(
+        &mut self,
+        delay: Duration,
+        interval: Duration,
+        mut msg_producer: F,
+        recipient: Recipient<R::Message>,
     ) -> ScheduleToken
     where
-        F: FnMut(ScheduleToken) -> TimerControlFlow + Send + 'static,
+        F: FnMut() -> R::Message + Send,
     {
-        run_recurring(&mut self.timer, delay, interval, callback)
+        run_recurring(&mut self.timer, delay, interval, move |_| {
+            if let Err(e) = recipient.send(msg_producer()) {
+                warn!("Error in send_recurring_to: {}", e);
+            }
+        })
     }
 
     pub fn cancel_timer(&mut self, schedule_token: ScheduleToken) {
@@ -212,8 +245,7 @@ impl<A: Actor + ?Sized> Context<A> {
     }
 
     pub fn shutdown(&mut self) -> Result<(), ActorError> {
-        self.timer.shutdown();
-        self.system_handle.shutdown()
+        self.system_handle.shutdown(&mut self.timer)
     }
 }
 
@@ -278,7 +310,7 @@ fn run_recurring<F>(
     callback: F,
 ) -> ScheduleToken
 where
-    F: FnMut(ScheduleToken) -> TimerControlFlow + Send + 'static,
+    F: FnMut(ScheduleToken) + Send + 'static,
 {
     timer.run_recurring(delay, interval, callback)
 }
@@ -331,31 +363,6 @@ impl System {
         A: Actor + Send + 'static,
     {
         self.prepare(actor).spawn()
-    }
-
-    pub fn run_once<F>(&mut self, delay: Duration, callback: F) -> ScheduleToken
-    where
-        F: FnOnce(ScheduleToken) + Send + 'static,
-    {
-        run_once(&mut self.timer_handle.timer_ref(), delay, callback)
-    }
-
-    pub fn run_recurring<F>(
-        &mut self,
-        delay: Duration,
-        interval: Duration,
-        callback: F,
-    ) -> ScheduleToken
-    where
-        F: FnMut(ScheduleToken) -> TimerControlFlow + Send + 'static,
-    {
-        run_recurring(&mut self.timer_handle.timer_ref(), delay, interval, callback)
-    }
-
-    pub fn cancel_timer(&mut self, schedule_token: ScheduleToken) {
-        let mut timer = self.timer_handle.timer_ref();
-
-        timer.cancel(schedule_token);
     }
 
     /// Spawn a normal Actor in the system, using a factory that produces an [`Actor`],
@@ -420,6 +427,10 @@ impl System {
         }
 
         Ok(())
+    }
+
+    pub fn shutdown(&mut self) -> Result<(), ActorError> {
+        self.handle.shutdown(&mut self.timer_handle.timer_ref())
     }
 
     /// Takes an actor and its address and runs it on the calling thread. This function
@@ -521,7 +532,7 @@ impl Deref for System {
 
 impl SystemHandle {
     /// Stops all actors spawned by this system.
-    fn shutdown(&self) -> Result<(), ActorError> {
+    fn shutdown(&self, timer_ref: &mut TimerRef) -> Result<(), ActorError> {
         let current_thread = thread::current();
         let current_thread_name = current_thread.name().unwrap_or("Unknown thread id");
         info!("Thread [{}] shutting down the actor system", current_thread_name);
@@ -546,6 +557,7 @@ impl SystemHandle {
         }
 
         info!("[{}] system shutting down.", self.name);
+        timer_ref.shutdown();
 
         if let Some(callback) = self.callbacks.preshutdown.as_ref() {
             info!("[{}] calling pre-shutdown callback.", self.name);

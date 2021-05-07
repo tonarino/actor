@@ -5,20 +5,14 @@ use std::{
 };
 use uuid::Uuid;
 
-pub enum TimerType {
+pub(crate) enum TimerType {
     OneShot(Box<dyn FnOnce(ScheduleToken) + Send + 'static>),
-    Recurring(Duration, Box<dyn FnMut(ScheduleToken) -> TimerControlFlow + Send + 'static>),
+    Recurring(Duration, Box<dyn FnMut(ScheduleToken) + Send + 'static>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScheduleToken {
     uuid: Uuid,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum TimerControlFlow {
-    Continue,
-    Cancel,
 }
 
 impl ScheduleToken {
@@ -71,14 +65,14 @@ impl TimerRef {
         schedule_token
     }
 
-    pub fn run_recurring<F>(
+    pub(crate) fn run_recurring<F>(
         &mut self,
         delay: Duration,
         interval: Duration,
         callback: F,
     ) -> ScheduleToken
     where
-        F: FnMut(ScheduleToken) -> TimerControlFlow + Send + 'static,
+        F: FnMut(ScheduleToken) + Send + 'static,
     {
         let now = Instant::now();
         let schedule_token = ScheduleToken::new();
@@ -98,7 +92,7 @@ impl TimerRef {
         let _ = self.thread_tx.send(ThreadMessage::Cancel(schedule_token));
     }
 
-    pub(crate) fn shutdown(&mut self) {
+    pub fn shutdown(&mut self) {
         let _ = self.thread_tx.send(ThreadMessage::Shutdown);
     }
 }
@@ -123,11 +117,6 @@ impl TimerHandle {
 
     pub fn timer_ref(&self) -> TimerRef {
         self.timer_ref.clone()
-    }
-
-    pub fn shutdown(self) {
-        let _ = self.timer_ref.thread_tx.send(ThreadMessage::Shutdown);
-        let _ = self.join_handle.join();
     }
 }
 
@@ -176,18 +165,15 @@ impl TimerThread {
                             closure(schedule_token);
                         },
                         TimerType::Recurring(interval, mut closure) => {
-                            match closure(schedule_token) {
-                                TimerControlFlow::Continue => {
-                                    let new_entry = TimerEntry {
-                                        schedule_token,
-                                        scheduled_at: entry.scheduled_at + interval,
-                                        timer_type: TimerType::Recurring(interval, closure),
-                                    };
+                            closure(schedule_token);
 
-                                    self.entries.push(new_entry);
-                                },
-                                TimerControlFlow::Cancel => {},
-                            }
+                            let new_entry = TimerEntry {
+                                schedule_token,
+                                scheduled_at: entry.scheduled_at + interval,
+                                timer_type: TimerType::Recurring(interval, closure),
+                            };
+
+                            self.entries.push(new_entry);
                         },
                     }
                 }
