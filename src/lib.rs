@@ -190,16 +190,23 @@ pub struct Context<A: Actor + ?Sized> {
 }
 
 impl<A: Actor + ?Sized> Context<A> {
+    /// Sends a message once to the calling actor itself, after a delay.
+    /// Cancel with a call to `context.cancel_timer(schedule_token);`
     pub fn send_once_to_self(&mut self, delay: Duration, msg: A::Message) -> ScheduleToken {
         self.send_once_to::<A>(delay, msg, self.myself.recipient.clone())
     }
 
-    pub fn send_once_to<R: Actor + ?Sized>(
+    /// Sends a message once to a specified actor recipient, after a delay.
+    /// Cancel with a call to `context.cancel_timer(schedule_token);`
+    pub fn send_once_to<R>(
         &mut self,
         delay: Duration,
         msg: R::Message,
         recipient: Recipient<R::Message>,
-    ) -> ScheduleToken {
+    ) -> ScheduleToken
+    where
+        R: Actor + ?Sized,
+    {
         run_once(&mut self.timer, delay, move |_| {
             if let Err(e) = recipient.send(msg) {
                 warn!("Error in send_once_to: {}", e);
@@ -207,13 +214,18 @@ impl<A: Actor + ?Sized> Context<A> {
         })
     }
 
-    pub fn send_recurring_to_self<F: 'static>(
+    /// Sends a recurring message to the calling actor itself, after a delay.
+    /// After the delay, messages will continue to be delivered every `interval` duration.
+    /// Ideally `msg_producer` should simply create a message and that's it. Do not do any
+    /// blocking work or you will block the timer thread.
+    /// Cancel with a call to `context.cancel_timer(schedule_token);`
+    pub fn send_recurring_to_self<F>(
         &mut self,
         delay: Duration,
         interval: Duration,
         msg_producer: F,
     ) where
-        F: FnMut() -> A::Message + Send,
+        F: FnMut() -> A::Message + Send + 'static,
     {
         self.send_recurring_to::<F, A>(
             delay,
@@ -223,7 +235,12 @@ impl<A: Actor + ?Sized> Context<A> {
         );
     }
 
-    pub fn send_recurring_to<F: 'static, R: Actor + ?Sized>(
+    /// Sends a recurring message to a specified actor recipient, after a delay.
+    /// After the delay, messages will continue to be delivered every `interval` duration.
+    /// Ideally `msg_producer` should simply create a message and that's it. Do not do any
+    /// blocking work or you will block the timer thread.
+    /// Cancel with a call to `context.cancel_timer(schedule_token);`
+    pub fn send_recurring_to<F, R>(
         &mut self,
         delay: Duration,
         interval: Duration,
@@ -231,7 +248,8 @@ impl<A: Actor + ?Sized> Context<A> {
         recipient: Recipient<R::Message>,
     ) -> ScheduleToken
     where
-        F: FnMut() -> R::Message + Send,
+        F: FnMut() -> R::Message + Send + 'static,
+        R: Actor + ?Sized,
     {
         run_recurring(&mut self.timer, delay, interval, move |_| {
             if let Err(e) = recipient.send(msg_producer()) {
@@ -240,6 +258,10 @@ impl<A: Actor + ?Sized> Context<A> {
         })
     }
 
+    /// Cancel any timer-based message sending which was initiated via `send_*`.
+    /// The `ScheduleToken` comes from the various `send_*` calls.
+    /// Do not rely on precise timing of the cancellation, the message _may_ be sent
+    /// before it is cancelled.
     pub fn cancel_timer(&mut self, schedule_token: ScheduleToken) {
         self.timer.cancel(schedule_token);
     }
