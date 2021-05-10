@@ -207,7 +207,7 @@ impl<A: Actor + ?Sized> Context<A> {
     where
         R: Actor + ?Sized,
     {
-        run_once(&mut self.timer, delay, move |_| {
+        self.timer.run_once(delay, move |_| {
             if let Err(e) = recipient.send(msg) {
                 warn!("Error in send_once_to: {}", e);
             }
@@ -251,7 +251,7 @@ impl<A: Actor + ?Sized> Context<A> {
         F: FnMut() -> R::Message + Send + 'static,
         R: Actor + ?Sized,
     {
-        run_recurring(&mut self.timer, delay, interval, move |_| {
+        self.timer.run_recurring(delay, interval, move |_| {
             if let Err(e) = recipient.send(msg_producer()) {
                 warn!("Error in send_recurring_to: {}", e);
             }
@@ -316,25 +316,6 @@ impl<'a, A: 'static + Actor, F: FnOnce() -> A + Send + 'static> SpawnBuilder<'a,
 
         self.system.spawn_fn_with_addr(factory, addr.clone()).map(move |_| addr)
     }
-}
-
-fn run_once<F>(timer: &mut TimerRef, delay: Duration, callback: F) -> ScheduleToken
-where
-    F: FnOnce(ScheduleToken) + Send + 'static,
-{
-    timer.run_once(delay, callback)
-}
-
-fn run_recurring<F>(
-    timer: &mut TimerRef,
-    delay: Duration,
-    interval: Duration,
-    callback: F,
-) -> ScheduleToken
-where
-    F: FnMut(ScheduleToken) + Send + 'static,
-{
-    timer.run_recurring(delay, interval, callback)
 }
 
 impl System {

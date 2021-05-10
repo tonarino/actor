@@ -17,9 +17,7 @@ pub struct ScheduleToken {
 
 impl ScheduleToken {
     fn new() -> Self {
-        let id = Uuid::new_v4();
-
-        Self { uuid: id }
+        Self { uuid: Uuid::new_v4() }
     }
 }
 
@@ -36,13 +34,13 @@ struct TimerEntry {
 }
 
 #[derive(Debug)]
-pub struct TimerHandle {
+pub(crate) struct TimerHandle {
     join_handle: JoinHandle<()>,
     timer_ref: TimerRef,
 }
 
 #[derive(Debug, Clone)]
-pub struct TimerRef {
+pub(crate) struct TimerRef {
     thread_tx: Sender<ThreadMessage>,
 }
 
@@ -155,8 +153,11 @@ impl TimerThread {
             // Expire and run all timers
             let now = Instant::now();
 
+            // We want to iterate over entries and possibly remove them as we go.
+            // It's easy to do this via reverse iteration with calls to `swap_remove()`.
+            // We can do this because order doesn't matter in our case.
             for i in (0..self.entries.len()).rev() {
-                if now > self.entries[i].scheduled_at {
+                if now >= self.entries[i].scheduled_at {
                     let entry = self.entries.swap_remove(i);
                     let schedule_token = entry.schedule_token;
 
