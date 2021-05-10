@@ -44,7 +44,13 @@
 use crossbeam_channel::{self as channel, select, Receiver, Sender};
 use log::*;
 use parking_lot::{Mutex, RwLock};
-use std::{fmt, ops::Deref, sync::Arc, thread, time::Duration};
+use std::{
+    fmt,
+    ops::Deref,
+    sync::Arc,
+    thread,
+    time::{Duration, Instant},
+};
 
 #[cfg(test)]
 pub mod testing;
@@ -177,10 +183,16 @@ pub struct SystemHandle {
 
 /// An execution context for a specific actor. Specifically, this is useful for managing
 /// the lifecycle of itself (through the `myself` field) and other actors via the `SystemHandle`
-/// provided.
+/// provided. A time-based deadline for receiving a message can be set using `receive_deadline`.
 pub struct Context<A: Actor + ?Sized> {
     pub system_handle: SystemHandle,
     pub myself: Addr<A>,
+    /// A deadline for receiving the next message.
+    ///
+    /// When a set deadline has passed, actor's [`deadline_passed()`][Actor::deadline_passed] is
+    /// called and the deadline is cleared. A deadline in the past is considered to expire right
+    /// in the next iteration (possibly after receiving new messages).
+    pub receive_deadline: Option<Instant>,
 }
 
 /// A builder for specifying how to spawn an [`Actor`].
@@ -296,7 +308,11 @@ impl System {
         }
 
         let system_handle = self.handle.clone();
-        let mut context = Context { system_handle: system_handle.clone(), myself: addr.clone() };
+        let mut context = Context {
+            system_handle: system_handle.clone(),
+            myself: addr.clone(),
+            receive_deadline: None,
+        };
         let control_addr = addr.control_tx.clone();
 
         let thread_handle = thread::Builder::new()
@@ -346,7 +362,11 @@ impl System {
         }
 
         let system_handle = &self.handle;
-        let mut context = Context { system_handle: system_handle.clone(), myself: addr.clone() };
+        let mut context = Context {
+            system_handle: system_handle.clone(),
+            myself: addr.clone(),
+            receive_deadline: None,
+        };
 
         self.handle.registry.lock().push(RegistryEntry::CurrentThread(addr.control_tx.clone()));
 
@@ -375,6 +395,14 @@ impl System {
         A: Actor,
     {
         loop {
+            // Implement optional deadline, see [crossbeam_channel::never()] docs.
+            let timeout = match context.receive_deadline {
+                Some(deadline) => {
+                    crossbeam_channel::after(deadline.saturating_duration_since(Instant::now()))
+                },
+                None => crossbeam_channel::never(),
+            };
+
             select! {
                 recv(addr.control_rx) -> msg => {
                     match msg {
@@ -406,6 +434,11 @@ impl System {
                         }
                     }
                 },
+
+                recv(timeout) -> _ => {
+                    let deadline = context.receive_deadline.take().expect("implied by timeout");
+                    actor.deadline_passed(context, deadline);
+                }
             };
         }
     }
@@ -583,6 +616,12 @@ pub trait Actor {
 
     /// An optional callback when the Actor has been stopped.
     fn stopped(&mut self, _context: &mut Context<Self>) {}
+
+    /// An optional callback when deadline has passed while waiting for a message.
+    /// The deadline has to be set via [`Context::receive_deadline`] first.
+    /// The instant to which deadline was originally set is passed via `deadline` argument;
+    /// it is normally close to Instant::now(), but can be later if the actor was busy.
+    fn deadline_passed(&mut self, _context: &mut Context<Self>, _deadline: Instant) {}
 }
 
 pub struct Addr<A: Actor + ?Sized> {
@@ -733,7 +772,11 @@ impl<M: Into<N>, N> SenderTrait<M> for Arc<dyn SenderTrait<N>> {
 
 #[cfg(test)]
 mod tests {
-    use std::{rc::Rc, time::Duration};
+    use std::{
+        rc::Rc,
+        sync::atomic::{AtomicU32, Ordering},
+        time::Duration,
+    };
 
     use super::*;
 
@@ -821,6 +864,70 @@ mod tests {
 
         // Allowable, as the struct will be run on the current thread.
         let _ = system.prepare(LocalActor::default()).run_and_block().unwrap();
+
+        system.shutdown().unwrap();
+    }
+
+    #[test]
+    fn timeouts() {
+        struct TimeoutActor {
+            handle_count: Arc<AtomicU32>,
+            timeout_count: Arc<AtomicU32>,
+        }
+
+        impl Actor for TimeoutActor {
+            type Error = ();
+            type Message = Option<Instant>;
+
+            fn name() -> &'static str {
+                "TimeoutActor"
+            }
+
+            fn handle(&mut self, ctx: &mut Context<Self>, msg: Option<Instant>) -> Result<(), ()> {
+                self.handle_count.fetch_add(1, Ordering::SeqCst);
+                if msg.is_some() {
+                    ctx.receive_deadline = msg;
+                }
+                Ok(())
+            }
+
+            fn deadline_passed(&mut self, _: &mut Context<Self>, _: Instant) {
+                self.timeout_count.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let mut system = System::new("timeouts");
+        let (handle_count, timeout_count) = (Default::default(), Default::default());
+        let actor = TimeoutActor {
+            handle_count: Arc::clone(&handle_count),
+            timeout_count: Arc::clone(&timeout_count),
+        };
+        let addr = system.spawn(actor).unwrap();
+
+        // Test that setting deadline to past triggers the deadline immediately.
+        addr.send(Some(Instant::now() - Duration::from_secs(1))).unwrap();
+        thread::sleep(Duration::from_millis(10));
+        assert_eq!(handle_count.load(Ordering::SeqCst), 1);
+        assert_eq!(timeout_count.load(Ordering::SeqCst), 1);
+
+        // Test the normal case.
+        addr.send(Some(Instant::now() + Duration::from_millis(20))).unwrap();
+        thread::sleep(Duration::from_millis(10));
+        assert_eq!(handle_count.load(Ordering::SeqCst), 2);
+        assert_eq!(timeout_count.load(Ordering::SeqCst), 1);
+        thread::sleep(Duration::from_millis(20));
+        assert_eq!(handle_count.load(Ordering::SeqCst), 2);
+        assert_eq!(timeout_count.load(Ordering::SeqCst), 2);
+
+        // Test that receiving a message doesn't reset the deadline.
+        addr.send(Some(Instant::now() + Duration::from_millis(40))).unwrap();
+        thread::sleep(Duration::from_millis(20));
+        assert_eq!(handle_count.load(Ordering::SeqCst), 3);
+        assert_eq!(timeout_count.load(Ordering::SeqCst), 2);
+        addr.send(None).unwrap();
+        thread::sleep(Duration::from_millis(30));
+        assert_eq!(handle_count.load(Ordering::SeqCst), 4);
+        assert_eq!(timeout_count.load(Ordering::SeqCst), 3);
 
         system.shutdown().unwrap();
     }
