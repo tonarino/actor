@@ -65,7 +65,7 @@ impl DelayActor {
         Self { queue: Default::default() }
     }
 
-    fn schedule_timeout(&self, context: &mut Context<Self>) {
+    fn schedule_timeout(&self, context: &mut Context<DelayedMessage>) {
         // Schedule next timeout if the queue is not empty.
         context.set_deadline(self.queue.peek().map(|earliest| earliest.fire_at));
     }
@@ -81,7 +81,7 @@ impl Actor for DelayActor {
 
     fn handle(
         &mut self,
-        context: &mut Context<Self>,
+        context: &mut Context<Self::Message>,
         message: Self::Message,
     ) -> Result<(), Self::Error> {
         self.queue.push(message);
@@ -89,7 +89,7 @@ impl Actor for DelayActor {
         Ok(())
     }
 
-    fn deadline_passed(&mut self, context: &mut Context<Self>, _deadline: Instant) {
+    fn deadline_passed(&mut self, context: &mut Context<Self::Message>, _deadline: Instant) {
         // Send all messages that should have been sent by now.
         let now = Instant::now();
         while self.queue.peek().map(|m| m.fire_at <= now).unwrap_or(false) {
@@ -115,7 +115,7 @@ impl Actor for FinalConsumer {
         "FinalConsumer"
     }
 
-    fn handle(&mut self, context: &mut Context<Self>, message: String) -> Result<(), Self::Error> {
+    fn handle(&mut self, context: &mut Context<String>, message: String) -> Result<(), Error> {
         println!("Got a message: {:?} at {:?}", message, self.started_at.elapsed());
         if message == "last" {
             context.system_handle.shutdown()?;

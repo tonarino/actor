@@ -21,7 +21,7 @@
 //!         "TestActor"
 //!     }
 //!
-//!     fn handle(&mut self, _context: &mut Context<Self>, message: Self::Message) -> Result<(), ()> {
+//!     fn handle(&mut self, _context: &mut Context<Self::Message>, message: Self::Message) -> Result<(), ()> {
 //!         println!("message: {}", message);
 //!
 //!         Ok(())
@@ -185,14 +185,14 @@ pub struct SystemHandle {
 /// the lifecycle of itself (through the `myself` field) and other actors via the `SystemHandle`
 /// provided. A time-based deadline for receiving a message can be set using
 /// [`Self::set_deadline()`] and friends.
-pub struct Context<A: Actor + ?Sized> {
+pub struct Context<M> {
     pub system_handle: SystemHandle,
-    pub myself: Addr<A>,
+    pub myself: Recipient<M>,
     receive_deadline: Option<Instant>,
 }
 
-impl<A: Actor + ?Sized> Context<A> {
-    fn new(system_handle: SystemHandle, myself: Addr<A>) -> Self {
+impl<M> Context<M> {
+    fn new(system_handle: SystemHandle, myself: Recipient<M>) -> Self {
         Self { system_handle, myself, receive_deadline: None }
     }
 
@@ -329,7 +329,7 @@ impl System {
         }
 
         let system_handle = self.handle.clone();
-        let mut context = Context::new(system_handle.clone(), addr.clone());
+        let mut context = Context::new(system_handle.clone(), addr.recipient.clone());
         let control_addr = addr.control_tx.clone();
 
         let thread_handle = thread::Builder::new()
@@ -379,7 +379,7 @@ impl System {
         }
 
         let system_handle = &self.handle;
-        let mut context = Context::new(system_handle.clone(), addr.clone());
+        let mut context = Context::new(system_handle.clone(), addr.recipient.clone());
 
         self.handle.registry.lock().push(RegistryEntry::CurrentThread(addr.control_tx.clone()));
 
@@ -401,7 +401,7 @@ impl System {
     fn run_actor_select_loop<A>(
         mut actor: A,
         addr: Addr<A>,
-        context: &mut Context<A>,
+        context: &mut Context<A::Message>,
         system_handle: &SystemHandle,
     ) -> Result<(), ActorError>
     where
@@ -617,7 +617,7 @@ pub trait Actor {
     /// The primary function of this trait, allowing an actor to handle incoming messages of a certain type.
     fn handle(
         &mut self,
-        context: &mut Context<Self>,
+        context: &mut Context<Self::Message>,
         message: Self::Message,
     ) -> Result<(), Self::Error>;
 
@@ -625,10 +625,10 @@ pub trait Actor {
     fn name() -> &'static str;
 
     /// An optional callback when the Actor has been started.
-    fn started(&mut self, _context: &mut Context<Self>) {}
+    fn started(&mut self, _context: &mut Context<Self::Message>) {}
 
     /// An optional callback when the Actor has been stopped.
-    fn stopped(&mut self, _context: &mut Context<Self>) {}
+    fn stopped(&mut self, _context: &mut Context<Self::Message>) {}
 
     /// An optional callback when a deadline has passed.
     ///
@@ -644,10 +644,10 @@ pub trait Actor {
     /// #    type Error = ();
     /// #    type Message = ();
     /// #    fn name() -> &'static str { "TickingActor" }
-    /// #    fn handle(&mut self, _: &mut Context<Self>, _: ()) -> Result<(), ()> { Ok(()) }
+    /// #    fn handle(&mut self, _: &mut Context<Self::Message>, _: ()) -> Result<(), ()> { Ok(()) }
     ///     // ...
     ///
-    ///     fn deadline_passed(&mut self, context: &mut Context<Self>, deadline: Instant) {
+    ///     fn deadline_passed(&mut self, context: &mut Context<Self::Message>, deadline: Instant) {
     ///         // do_periodic_housekeeping();
     ///
     ///         // A: Schedule one second from now (even if delayed); drifting tick.
@@ -661,7 +661,7 @@ pub trait Actor {
     ///     }
     /// }
     /// ```
-    fn deadline_passed(&mut self, _context: &mut Context<Self>, _deadline: Instant) {}
+    fn deadline_passed(&mut self, _context: &mut Context<Self::Message>, _deadline: Instant) {}
 }
 
 pub struct Addr<A: Actor + ?Sized> {
@@ -829,17 +829,17 @@ mod tests {
             "TestActor"
         }
 
-        fn handle(&mut self, _: &mut Context<Self>, message: usize) -> Result<(), ()> {
+        fn handle(&mut self, _: &mut Context<usize>, message: usize) -> Result<(), ()> {
             println!("message: {}", message);
 
             Ok(())
         }
 
-        fn started(&mut self, _: &mut Context<Self>) {
+        fn started(&mut self, _: &mut Context<usize>) {
             println!("started");
         }
 
-        fn stopped(&mut self, _: &mut Context<Self>) {
+        fn stopped(&mut self, _: &mut Context<usize>) {
             println!("stopped");
         }
     }
@@ -887,12 +887,12 @@ mod tests {
                 "LocalActor"
             }
 
-            fn handle(&mut self, _: &mut Context<Self>, _: ()) -> Result<(), ()> {
+            fn handle(&mut self, _: &mut Context<()>, _: ()) -> Result<(), ()> {
                 Ok(())
             }
 
             /// We just need this test to compile, not run.
-            fn started(&mut self, ctx: &mut Context<Self>) {
+            fn started(&mut self, ctx: &mut Context<()>) {
                 ctx.system_handle.shutdown().unwrap();
             }
         }
@@ -923,7 +923,11 @@ mod tests {
                 "TimeoutActor"
             }
 
-            fn handle(&mut self, ctx: &mut Context<Self>, msg: Option<Instant>) -> Result<(), ()> {
+            fn handle(
+                &mut self,
+                ctx: &mut Context<Self::Message>,
+                msg: Self::Message,
+            ) -> Result<(), ()> {
                 self.handle_count.fetch_add(1, Ordering::SeqCst);
                 if msg.is_some() {
                     ctx.receive_deadline = msg;
@@ -931,7 +935,7 @@ mod tests {
                 Ok(())
             }
 
-            fn deadline_passed(&mut self, _: &mut Context<Self>, _: Instant) {
+            fn deadline_passed(&mut self, _: &mut Context<Self::Message>, _: Instant) {
                 self.timeout_count.fetch_add(1, Ordering::SeqCst);
             }
         }
