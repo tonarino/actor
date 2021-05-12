@@ -16,13 +16,13 @@ impl Actor for ChainLink {
 
     fn handle(
         &mut self,
-        context: &Context<Self>,
+        context: &mut Context<Self>,
         message: Self::Message,
     ) -> Result<(), Self::Error> {
         if message > 0 {
             self.next.send(message - 1).unwrap();
         } else {
-            context.system_handle.shutdown().unwrap();
+            context.shutdown().unwrap();
         }
 
         Ok(())

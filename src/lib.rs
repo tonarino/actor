@@ -21,7 +21,7 @@
 //!         "TestActor"
 //!     }
 //!
-//!     fn handle(&mut self, _context: &Context<Self>, message: Self::Message) -> Result<(), ()> {
+//!     fn handle(&mut self, _context: &mut Context<Self>, message: Self::Message) -> Result<(), ()> {
 //!         println!("message: {}", message);
 //!
 //!         Ok(())
@@ -41,6 +41,7 @@
 //! ```
 //!
 
+use crate::timer::{TimerHandle, TimerRef};
 use crossbeam_channel::{self as channel, select, Receiver, Sender};
 use log::*;
 use parking_lot::{Mutex, RwLock};
@@ -48,6 +49,10 @@ use std::{fmt, ops::Deref, sync::Arc, thread, time::Duration};
 
 #[cfg(test)]
 pub mod testing;
+
+mod timer;
+
+pub use timer::ScheduleToken;
 
 // Default capacity for channels unless overridden by `.with_capacity()`.
 static DEFAULT_CHANNEL_CAPACITY: usize = 5;
@@ -131,9 +136,9 @@ impl<M> From<channel::TrySendError<M>> for SendError {
 ///
 /// You may run multiple systems in the same application, each system being responsible
 /// for its own pool of actors.
-#[derive(Default)]
 pub struct System {
     handle: SystemHandle,
+    timer_handle: TimerHandle,
 }
 
 type SystemCallback = Box<dyn Fn() -> Result<(), ActorError> + Send + Sync>;
@@ -181,6 +186,89 @@ pub struct SystemHandle {
 pub struct Context<A: Actor + ?Sized> {
     pub system_handle: SystemHandle,
     pub myself: Addr<A>,
+    timer: TimerRef,
+}
+
+impl<A: Actor + ?Sized> Context<A> {
+    /// Sends a message once to the calling actor itself, after a delay.
+    /// Cancel with a call to `context.cancel_timer(schedule_token);`
+    pub fn send_once_to_self(&mut self, delay: Duration, msg: A::Message) -> ScheduleToken {
+        self.send_once_to::<A>(delay, msg, self.myself.recipient.clone())
+    }
+
+    /// Sends a message once to a specified actor recipient, after a delay.
+    /// Cancel with a call to `context.cancel_timer(schedule_token);`
+    pub fn send_once_to<R>(
+        &mut self,
+        delay: Duration,
+        msg: R::Message,
+        recipient: Recipient<R::Message>,
+    ) -> ScheduleToken
+    where
+        R: Actor + ?Sized,
+    {
+        self.timer.run_once(delay, move |_| {
+            if let Err(e) = recipient.send(msg) {
+                warn!("Error in send_once_to: {}", e);
+            }
+        })
+    }
+
+    /// Sends a recurring message to the calling actor itself, after a delay.
+    /// After the delay, messages will continue to be delivered every `interval` duration.
+    /// Ideally `msg_producer` should simply create a message and that's it. Do not do any
+    /// blocking work or you will block the timer thread.
+    /// Cancel with a call to `context.cancel_timer(schedule_token);`
+    pub fn send_recurring_to_self<F>(
+        &mut self,
+        delay: Duration,
+        interval: Duration,
+        msg_producer: F,
+    ) where
+        F: FnMut() -> A::Message + Send + 'static,
+    {
+        self.send_recurring_to::<F, A>(
+            delay,
+            interval,
+            msg_producer,
+            self.myself.recipient.clone(),
+        );
+    }
+
+    /// Sends a recurring message to a specified actor recipient, after a delay.
+    /// After the delay, messages will continue to be delivered every `interval` duration.
+    /// Ideally `msg_producer` should simply create a message and that's it. Do not do any
+    /// blocking work or you will block the timer thread.
+    /// Cancel with a call to `context.cancel_timer(schedule_token);`
+    pub fn send_recurring_to<F, R>(
+        &mut self,
+        delay: Duration,
+        interval: Duration,
+        mut msg_producer: F,
+        recipient: Recipient<R::Message>,
+    ) -> ScheduleToken
+    where
+        F: FnMut() -> R::Message + Send + 'static,
+        R: Actor + ?Sized,
+    {
+        self.timer.run_recurring(delay, interval, move |_| {
+            if let Err(e) = recipient.send(msg_producer()) {
+                warn!("Error in send_recurring_to: {}", e);
+            }
+        })
+    }
+
+    /// Cancel any timer-based message sending which was initiated via `send_*`.
+    /// The `ScheduleToken` comes from the various `send_*` calls.
+    /// Do not rely on precise timing of the cancellation, the message _may_ be sent
+    /// before it is cancelled.
+    pub fn cancel_timer(&mut self, schedule_token: ScheduleToken) {
+        self.timer.cancel(schedule_token);
+    }
+
+    pub fn shutdown(&mut self) -> Result<(), ActorError> {
+        self.system_handle.shutdown(&mut self.timer)
+    }
 }
 
 /// A builder for specifying how to spawn an [`Actor`].
@@ -237,12 +325,16 @@ impl System {
     }
 
     pub fn with_callbacks(name: &str, callbacks: SystemCallbacks) -> Self {
+        // TODO(bschwind) - Make this configurable
+        let timer_resolution = Duration::from_millis(1);
+
         Self {
             handle: SystemHandle {
                 name: name.to_owned(),
                 callbacks: Arc::new(callbacks),
                 ..SystemHandle::default()
             },
+            timer_handle: TimerHandle::new(timer_resolution),
         }
     }
 
@@ -296,7 +388,13 @@ impl System {
         }
 
         let system_handle = self.handle.clone();
-        let context = Context { system_handle: system_handle.clone(), myself: addr.clone() };
+        let timer_ref = self.timer_handle.timer_ref();
+
+        let mut context = Context {
+            system_handle: system_handle.clone(),
+            myself: addr.clone(),
+            timer: timer_ref,
+        };
         let control_addr = addr.control_tx.clone();
 
         let thread_handle = thread::Builder::new()
@@ -304,11 +402,11 @@ impl System {
             .spawn(move || {
                 let mut actor = factory();
 
-                actor.started(&context);
+                actor.started(&mut context);
                 debug!("[{}] started actor: {}", system_handle.name, A::name());
 
                 let actor_result =
-                    Self::run_actor_select_loop(actor, addr, &context, &system_handle);
+                    Self::run_actor_select_loop(actor, addr, &mut context, &system_handle);
                 if let Err(err) = &actor_result {
                     error!("run_actor_select_loop returned an error: {}", err);
                 }
@@ -334,6 +432,10 @@ impl System {
         Ok(())
     }
 
+    pub fn shutdown(&mut self) -> Result<(), ActorError> {
+        self.handle.shutdown(&mut self.timer_handle.timer_ref())
+    }
+
     /// Takes an actor and its address and runs it on the calling thread. This function
     /// will exit once the actor has stopped.
     fn block_on<A>(&mut self, mut actor: A, addr: Addr<A>) -> Result<(), ActorError>
@@ -346,13 +448,19 @@ impl System {
         }
 
         let system_handle = &self.handle;
-        let context = Context { system_handle: system_handle.clone(), myself: addr.clone() };
+        let timer_ref = self.timer_handle.timer_ref();
+
+        let mut context = Context {
+            system_handle: system_handle.clone(),
+            myself: addr.clone(),
+            timer: timer_ref,
+        };
 
         self.handle.registry.lock().push(RegistryEntry::CurrentThread(addr.control_tx.clone()));
 
-        actor.started(&context);
+        actor.started(&mut context);
         debug!("[{}] started actor: {}", system_handle.name, A::name());
-        Self::run_actor_select_loop(actor, addr, &context, system_handle)?;
+        Self::run_actor_select_loop(actor, addr, &mut context, system_handle)?;
 
         // Wait for the system to shutdown before we exit, otherwise the process
         // would exit before the system is completely shutdown
@@ -368,7 +476,7 @@ impl System {
     fn run_actor_select_loop<A>(
         mut actor: A,
         addr: Addr<A>,
-        context: &Context<A>,
+        context: &mut Context<A>,
         system_handle: &SystemHandle,
     ) -> Result<(), ActorError>
     where
@@ -379,7 +487,7 @@ impl System {
                 recv(addr.control_rx) -> msg => {
                     match msg {
                         Ok(Control::Stop) => {
-                            actor.stopped(&context);
+                            actor.stopped(context);
                             debug!("[{}] stopped actor: {}", system_handle.name, A::name());
                             return Ok(());
                         },
@@ -394,9 +502,9 @@ impl System {
                     match msg {
                         Ok(msg) => {
                             trace!("[{}] message received by {}", system_handle.name, A::name());
-                            if let Err(err) = actor.handle(&context, msg) {
+                            if let Err(err) = actor.handle(context, msg) {
                                 error!("{} error: {:?}", A::name(), err);
-                                let _ = context.system_handle.shutdown();
+                                let _ = context.shutdown();
 
                                 return Ok(());
                             }
@@ -427,7 +535,7 @@ impl Deref for System {
 
 impl SystemHandle {
     /// Stops all actors spawned by this system.
-    pub fn shutdown(&self) -> Result<(), ActorError> {
+    fn shutdown(&self, timer_ref: &mut TimerRef) -> Result<(), ActorError> {
         let current_thread = thread::current();
         let current_thread_name = current_thread.name().unwrap_or("Unknown thread id");
         info!("Thread [{}] shutting down the actor system", current_thread_name);
@@ -452,6 +560,7 @@ impl SystemHandle {
         }
 
         info!("[{}] system shutting down.", self.name);
+        timer_ref.shutdown();
 
         if let Some(callback) = self.callbacks.preshutdown.as_ref() {
             info!("[{}] calling pre-shutdown callback.", self.name);
@@ -571,7 +680,7 @@ pub trait Actor {
     /// The primary function of this trait, allowing an actor to handle incoming messages of a certain type.
     fn handle(
         &mut self,
-        context: &Context<Self>,
+        context: &mut Context<Self>,
         message: Self::Message,
     ) -> Result<(), Self::Error>;
 
@@ -579,10 +688,10 @@ pub trait Actor {
     fn name() -> &'static str;
 
     /// An optional callback when the Actor has been started.
-    fn started(&mut self, _context: &Context<Self>) {}
+    fn started(&mut self, _context: &mut Context<Self>) {}
 
     /// An optional callback when the Actor has been stopped.
-    fn stopped(&mut self, _context: &Context<Self>) {}
+    fn stopped(&mut self, _context: &mut Context<Self>) {}
 }
 
 pub struct Addr<A: Actor + ?Sized> {
@@ -746,17 +855,17 @@ mod tests {
             "TestActor"
         }
 
-        fn handle(&mut self, _: &Context<Self>, message: usize) -> Result<(), ()> {
+        fn handle(&mut self, _: &mut Context<Self>, message: usize) -> Result<(), ()> {
             println!("message: {}", message);
 
             Ok(())
         }
 
-        fn started(&mut self, _: &Context<Self>) {
+        fn started(&mut self, _: &mut Context<Self>) {
             println!("started");
         }
 
-        fn stopped(&mut self, _: &Context<Self>) {
+        fn stopped(&mut self, _: &mut Context<Self>) {
             println!("stopped");
         }
     }
@@ -804,13 +913,14 @@ mod tests {
                 "LocalActor"
             }
 
-            fn handle(&mut self, _: &Context<Self>, _: ()) -> Result<(), ()> {
+            fn handle(&mut self, _: &mut Context<Self>, _: ()) -> Result<(), ()> {
                 Ok(())
             }
 
             /// We just need this test to compile, not run.
-            fn started(&mut self, ctx: &Context<Self>) {
-                ctx.system_handle.shutdown().unwrap();
+            fn started(&mut self, ctx: &mut Context<Self>) {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                ctx.shutdown().unwrap();
             }
         }
 
