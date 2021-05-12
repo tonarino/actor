@@ -16,7 +16,7 @@ impl Actor for ChainLink {
 
     fn handle(
         &mut self,
-        context: &mut Context<Self>,
+        context: &mut Context<Self::Message>,
         message: Self::Message,
     ) -> Result<(), Self::Error> {
         if message > 0 {

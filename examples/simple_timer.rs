@@ -26,20 +26,20 @@ impl Actor for TimerExampleActor {
         "TimerExampleActor"
     }
 
-    fn started(&mut self, context: &mut Context<Self>) {
+    fn started(&mut self, context: &mut Context<Self::Message>) {
         context.set_deadline(Some(self.started_at + Duration::from_millis(1500)));
     }
 
     fn handle(
         &mut self,
-        _context: &mut Context<Self>,
+        _context: &mut Context<Self::Message>,
         message: Self::Message,
     ) -> Result<(), Self::Error> {
         println!("Got a message: {:?} at {:?}", message, self.started_at.elapsed());
         Ok(())
     }
 
-    fn deadline_passed(&mut self, context: &mut Context<Self>, deadline: Instant) {
+    fn deadline_passed(&mut self, context: &mut Context<Self::Message>, deadline: Instant) {
         context.myself.send(TimerMessage::Periodic).unwrap();
         context.set_deadline(Some(deadline + Duration::from_secs(1)));
     }
