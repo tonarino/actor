@@ -83,11 +83,7 @@ impl Actor for Input {
         "Input"
     }
 
-    fn handle(
-        &mut self,
-        context: &mut Context<Self>,
-        _message: ReadNext,
-    ) -> Result<(), Self::Error> {
+    fn handle(&mut self, context: &Context<Self>, _message: ReadNext) -> Result<(), Self::Error> {
         // Read data from stdin and decode into correct format.
         let mut bytes = [0u8; CHUNK_SAMPLES * SAMPLE_BYTES];
         stdin().read_exact(&mut bytes)?;
@@ -118,7 +114,7 @@ impl Actor for Output {
         "Output"
     }
 
-    fn handle(&mut self, _context: &mut Context<Self>, message: Chunk) -> Result<(), Self::Error> {
+    fn handle(&mut self, _context: &Context<Self>, message: Chunk) -> Result<(), Self::Error> {
         let mut buffered_stdout = BufWriter::new(stdout());
         for sample in message.iter() {
             for bytes in sample.iter().map(|s| s.to_ne_bytes()) {
@@ -178,7 +174,7 @@ impl Actor for Mixer {
         "Mixer"
     }
 
-    fn handle(&mut self, _context: &mut Context<Self>, message: MixerInput) -> Result<(), Error> {
+    fn handle(&mut self, _context: &Context<Self>, message: MixerInput) -> Result<(), Error> {
         // Naive implementation that simply overwrites on overflow.
         match message {
             MixerInput::Dry(chunk) => self.dry_buffer = Some(chunk),
@@ -228,7 +224,7 @@ impl Actor for Delay {
         "Delay"
     }
 
-    fn handle(&mut self, _context: &mut Context<Self>, message: Chunk) -> Result<(), Error> {
+    fn handle(&mut self, _context: &Context<Self>, message: Chunk) -> Result<(), Error> {
         self.buffer[self.index] = message;
 
         // Advance index, reset to zero on overflow.
@@ -252,7 +248,7 @@ impl Actor for Damper {
         "Damper"
     }
 
-    fn handle(&mut self, _context: &mut Context<Self>, message: Chunk) -> Result<(), Error> {
+    fn handle(&mut self, _context: &Context<Self>, message: Chunk) -> Result<(), Error> {
         // Halve the signal.
         let chunk_slice: Arc<[Sample]> = message.iter().map(|s| [s[0] / 2, s[1] / 2]).collect();
         let chunk: Chunk = chunk_slice.try_into().expect("sample count is correct");
