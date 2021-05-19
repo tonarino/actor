@@ -183,16 +183,37 @@ pub struct SystemHandle {
 
 /// An execution context for a specific actor. Specifically, this is useful for managing
 /// the lifecycle of itself (through the `myself` field) and other actors via the `SystemHandle`
-/// provided. A time-based deadline for receiving a message can be set using `receive_deadline`.
+/// provided. A time-based deadline for receiving a message can be set using
+/// [`Self::set_deadline()`] and friends.
 pub struct Context<A: Actor + ?Sized> {
     pub system_handle: SystemHandle,
     pub myself: Addr<A>,
-    /// A deadline for receiving the next message.
-    ///
-    /// When a set deadline has passed, actor's [`deadline_passed()`][Actor::deadline_passed] is
-    /// called and the deadline is cleared. A deadline in the past is considered to expire right
-    /// in the next iteration (possibly after receiving new messages).
-    pub receive_deadline: Option<Instant>,
+    receive_deadline: Option<Instant>,
+}
+
+impl<A: Actor + ?Sized> Context<A> {
+    fn new(system_handle: SystemHandle, myself: Addr<A>) -> Self {
+        Self { system_handle, myself, receive_deadline: None }
+    }
+
+    /// Get the deadline previously set using [`Self::set_deadline()`] or [`Self::set_timeout()`].
+    /// The deadline is cleared just before [`Actor::deadline_passed()`] is called.
+    pub fn deadline(&self) -> &Option<Instant> {
+        &self.receive_deadline
+    }
+
+    /// Schedule a future one-shot call to [`Actor::deadline_passed()`], or cancel the schedule.
+    /// A deadline in the past is considered to expire right in the next iteration (possibly after
+    /// receiving new messages).
+    pub fn set_deadline(&mut self, deadline: Option<Instant>) {
+        self.receive_deadline = deadline;
+    }
+
+    /// Schedule or cancel a call to [`Actor::deadline_passed()`] after `timeout` from now.
+    /// Convenience variant of [`Self::set_deadline()`].
+    pub fn set_timeout(&mut self, timeout: Option<Duration>) {
+        self.set_deadline(timeout.map(|t| Instant::now() + t));
+    }
 }
 
 /// A builder for specifying how to spawn an [`Actor`].
@@ -308,11 +329,7 @@ impl System {
         }
 
         let system_handle = self.handle.clone();
-        let mut context = Context {
-            system_handle: system_handle.clone(),
-            myself: addr.clone(),
-            receive_deadline: None,
-        };
+        let mut context = Context::new(system_handle.clone(), addr.clone());
         let control_addr = addr.control_tx.clone();
 
         let thread_handle = thread::Builder::new()
@@ -362,11 +379,7 @@ impl System {
         }
 
         let system_handle = &self.handle;
-        let mut context = Context {
-            system_handle: system_handle.clone(),
-            myself: addr.clone(),
-            receive_deadline: None,
-        };
+        let mut context = Context::new(system_handle.clone(), addr.clone());
 
         self.handle.registry.lock().push(RegistryEntry::CurrentThread(addr.control_tx.clone()));
 
@@ -617,10 +630,37 @@ pub trait Actor {
     /// An optional callback when the Actor has been stopped.
     fn stopped(&mut self, _context: &mut Context<Self>) {}
 
-    /// An optional callback when deadline has passed while waiting for a message.
-    /// The deadline has to be set via [`Context::receive_deadline`] first.
-    /// The instant to which deadline was originally set is passed via `deadline` argument;
-    /// it is normally close to Instant::now(), but can be later if the actor was busy.
+    /// An optional callback when a deadline has passed.
+    ///
+    /// The deadline has to be set via [`Context::set_deadline()`] or [`Context::set_timeout()`]
+    /// first. The instant to which the deadline was originally set is passed via the `deadline`
+    /// argument; it is normally close to [`Instant::now()`], but can be later if the actor was busy.
+    ///
+    /// # Periodic tick example
+    /// ```
+    /// # use {std::{cmp::max, time::{Duration, Instant}}, tonari_actor::{Actor, Context}};
+    /// # struct TickingActor;
+    /// impl Actor for TickingActor {
+    /// #    type Error = ();
+    /// #    type Message = ();
+    /// #    fn name() -> &'static str { "TickingActor" }
+    /// #    fn handle(&mut self, _: &mut Context<Self>, _: ()) -> Result<(), ()> { Ok(()) }
+    ///     // ...
+    ///
+    ///     fn deadline_passed(&mut self, context: &mut Context<Self>, deadline: Instant) {
+    ///         // do_periodic_housekeeping();
+    ///
+    ///         // A: Schedule one second from now (even if delayed); drifting tick.
+    ///         context.set_timeout(Some(Duration::from_secs(1)));
+    ///
+    ///         // B: Schedule one second from deadline; non-drifting tick.
+    ///         context.set_deadline(Some(deadline + Duration::from_secs(1)));
+    ///
+    ///         // C: Schedule one second from deadline, but don't fire multiple times if delayed.
+    ///         context.set_deadline(Some(max(deadline + Duration::from_secs(1), Instant::now())));
+    ///     }
+    /// }
+    /// ```
     fn deadline_passed(&mut self, _context: &mut Context<Self>, _deadline: Instant) {}
 }
 

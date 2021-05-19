@@ -27,7 +27,7 @@ impl Actor for TimerExampleActor {
     }
 
     fn started(&mut self, context: &mut Context<Self>) {
-        context.receive_deadline = Some(self.started_at + Duration::from_millis(1500));
+        context.set_deadline(Some(self.started_at + Duration::from_millis(1500)));
     }
 
     fn handle(
@@ -39,17 +39,9 @@ impl Actor for TimerExampleActor {
         Ok(())
     }
 
-    fn deadline_passed(&mut self, context: &mut Context<Self>, _deadline: Instant) {
+    fn deadline_passed(&mut self, context: &mut Context<Self>, deadline: Instant) {
         context.myself.send(TimerMessage::Periodic).unwrap();
-
-        // A: Schedule one second from now (even if delayed); drifting tick.
-        context.receive_deadline = Some(Instant::now() + Duration::from_secs(1));
-
-        // B: Schedule one second from deadline; non-drifting tick.
-        // context.receive_deadline = Some(deadline + Duration::from_secs(1));
-
-        // C: Schedule one second from deadline, but don't fire multiple times if delayed.
-        // context.receive_deadline = Some(max(deadline + Duration::from_secs(1), Instant::now()));
+        context.set_deadline(Some(deadline + Duration::from_secs(1)));
     }
 }
 

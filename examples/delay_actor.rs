@@ -67,7 +67,7 @@ impl DelayActor {
 
     fn schedule_timeout(&self, context: &mut Context<Self>) {
         // Schedule next timeout if the queue is not empty.
-        context.receive_deadline = self.queue.peek().map(|earliest| earliest.fire_at)
+        context.set_deadline(self.queue.peek().map(|earliest| earliest.fire_at));
     }
 }
 
@@ -135,7 +135,11 @@ fn main() -> Result<(), Error> {
 
     let now = Instant::now();
     delay_actor.send(DelayedMessage::new(now + Duration::from_secs(3), &consumer, "last"))?;
-    delay_actor.send(DelayedMessage::new(now + Duration::from_secs(4), &consumer, "never sent"))?;
+    delay_actor.send(DelayedMessage::new(
+        now + Duration::from_secs(4),
+        &consumer,
+        "never received",
+    ))?;
     delay_actor.send(DelayedMessage::new(now + Duration::from_secs(2), &consumer, "second"))?;
     delay_actor.send(DelayedMessage::new(now + Duration::from_secs(1), &consumer, "first"))?;
 
