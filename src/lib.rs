@@ -216,6 +216,11 @@ impl<M> Context<M> {
     }
 }
 
+enum ChannelCapacity {
+    Bounded(usize),
+    Unbounded,
+}
+
 /// A builder for specifying how to spawn an [`Actor`].
 /// You can specify your own [`Addr`] for the Actor,
 /// the capacity of the Actor's inbox, and you can specify
@@ -224,7 +229,7 @@ impl<M> Context<M> {
 #[must_use = "You must call .spawn() or .block_on() to run this actor"]
 pub struct SpawnBuilder<'a, A: Actor, F: FnOnce() -> A> {
     system: &'a mut System,
-    capacity: Option<usize>,
+    capacity: Option<ChannelCapacity>,
     addr: Option<Addr<A>>,
     factory: F,
 }
@@ -232,7 +237,11 @@ pub struct SpawnBuilder<'a, A: Actor, F: FnOnce() -> A> {
 impl<'a, A: 'static + Actor, F: FnOnce() -> A> SpawnBuilder<'a, A, F> {
     /// Specify a capacity for the actor's receiving channel.
     pub fn with_capacity(self, capacity: usize) -> Self {
-        Self { capacity: Some(capacity), ..self }
+        Self { capacity: Some(ChannelCapacity::Bounded(capacity)), ..self }
+    }
+
+    pub fn unbounded(self) -> Self {
+        Self { capacity: Some(ChannelCapacity::Unbounded), ..self }
     }
 
     /// Specify an existing [`Addr`] to use with this Actor.
@@ -245,8 +254,13 @@ impl<'a, A: 'static + Actor, F: FnOnce() -> A> SpawnBuilder<'a, A, F> {
     /// has stopped.
     pub fn run_and_block(self) -> Result<(), ActorError> {
         let factory = self.factory;
-        let capacity = self.capacity.unwrap_or(DEFAULT_CHANNEL_CAPACITY);
-        let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
+        let capacity = self.capacity.unwrap_or(ChannelCapacity::Bounded(DEFAULT_CHANNEL_CAPACITY));
+        let addr = match capacity {
+            ChannelCapacity::Bounded(size) => {
+                self.addr.unwrap_or_else(|| Addr::with_capacity(size))
+            },
+            ChannelCapacity::Unbounded => self.addr.unwrap_or_else(Addr::unbounded),
+        };
 
         self.system.block_on(factory(), addr)
     }
@@ -256,8 +270,13 @@ impl<'a, A: 'static + Actor, F: FnOnce() -> A + Send + 'static> SpawnBuilder<'a,
     /// Spawn this Actor into a new thread managed by the [`System`].
     pub fn spawn(self) -> Result<Addr<A>, ActorError> {
         let factory = self.factory;
-        let capacity = self.capacity.unwrap_or(DEFAULT_CHANNEL_CAPACITY);
-        let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
+        let capacity = self.capacity.unwrap_or(ChannelCapacity::Bounded(DEFAULT_CHANNEL_CAPACITY));
+        let addr = match capacity {
+            ChannelCapacity::Bounded(size) => {
+                self.addr.unwrap_or_else(|| Addr::with_capacity(size))
+            },
+            ChannelCapacity::Unbounded => self.addr.unwrap_or_else(Addr::unbounded),
+        };
 
         self.system.spawn_fn_with_addr(factory, addr.clone()).map(move |_| addr)
     }
@@ -700,6 +719,14 @@ where
 impl<A: Actor> Addr<A> {
     pub fn with_capacity(capacity: usize) -> Self {
         let (message_tx, message_rx) = channel::bounded::<A::Message>(capacity);
+        let (control_tx, control_rx) = channel::bounded(DEFAULT_CHANNEL_CAPACITY);
+
+        let message_tx = Arc::new(message_tx);
+        Self { recipient: Recipient { message_tx, control_tx }, message_rx, control_rx }
+    }
+
+    pub fn unbounded() -> Self {
+        let (message_tx, message_rx) = channel::unbounded::<A::Message>();
         let (control_tx, control_rx) = channel::bounded(DEFAULT_CHANNEL_CAPACITY);
 
         let message_tx = Arc::new(message_tx);
