@@ -50,7 +50,7 @@ impl Actor for TestActor {
     type Error = Error;
     type Message = String;
 
-    fn handle(&mut self, context: &mut Context<String>, message: String) -> Result<(), Error> {
+    fn handle(&mut self, context: &mut Self::Context, message: String) -> Result<(), Error> {
         println!("Got a message: {}. Shuting down.", message);
         context.system_handle.shutdown().map_err(Error::from)
     }
@@ -59,11 +59,11 @@ impl Actor for TestActor {
         "TestActor"
     }
 
-    fn started(&mut self, context: &mut Context<String>) {
+    fn started(&mut self, context: &mut Self::Context) {
         context.set_timeout(Some(Duration::from_millis(100)))
     }
 
-    fn deadline_passed(&mut self, context: &mut Context<String>, deadline: Instant) {
+    fn deadline_passed(&mut self, context: &mut Self::Context, deadline: Instant) {
         context.myself.send(format!("deadline was {:?}", deadline)).unwrap();
     }
 }

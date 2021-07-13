@@ -22,7 +22,7 @@
 //!         "TestActor"
 //!     }
 //!
-//!     fn handle(&mut self, _context: &mut Context<Self::Message>, message: Self::Message) -> Result<(), ()> {
+//!     fn handle(&mut self, _context: &mut Self::Context, message: Self::Message) -> Result<(), ()> {
 //!         println!("message: {}", message);
 //!
 //!         Ok(())
@@ -654,10 +654,10 @@ pub trait Actor {
     /// #    type Error = ();
     /// #    type Message = ();
     /// #    fn name() -> &'static str { "TickingActor" }
-    /// #    fn handle(&mut self, _: &mut Context<Self::Message>, _: ()) -> Result<(), ()> { Ok(()) }
+    /// #    fn handle(&mut self, _: &mut Self::Context, _: ()) -> Result<(), ()> { Ok(()) }
     ///     // ...
     ///
-    ///     fn deadline_passed(&mut self, context: &mut Context<Self::Message>, deadline: Instant) {
+    ///     fn deadline_passed(&mut self, context: &mut Self::Context, deadline: Instant) {
     ///         // do_periodic_housekeeping();
     ///
     ///         // A: Schedule one second from now (even if delayed); drifting tick.
@@ -840,17 +840,17 @@ mod tests {
             "TestActor"
         }
 
-        fn handle(&mut self, _: &mut Context<usize>, message: usize) -> Result<(), ()> {
+        fn handle(&mut self, _: &mut Self::Context, message: usize) -> Result<(), ()> {
             println!("message: {}", message);
 
             Ok(())
         }
 
-        fn started(&mut self, _: &mut Context<usize>) {
+        fn started(&mut self, _: &mut Self::Context) {
             println!("started");
         }
 
-        fn stopped(&mut self, _: &mut Context<usize>) {
+        fn stopped(&mut self, _: &mut Self::Context) {
             println!("stopped");
         }
     }
@@ -899,12 +899,12 @@ mod tests {
                 "LocalActor"
             }
 
-            fn handle(&mut self, _: &mut Context<()>, _: ()) -> Result<(), ()> {
+            fn handle(&mut self, _: &mut Self::Context, _: ()) -> Result<(), ()> {
                 Ok(())
             }
 
             /// We just need this test to compile, not run.
-            fn started(&mut self, ctx: &mut Context<()>) {
+            fn started(&mut self, ctx: &mut Self::Context) {
                 ctx.system_handle.shutdown().unwrap();
             }
         }
@@ -936,11 +936,7 @@ mod tests {
                 "TimeoutActor"
             }
 
-            fn handle(
-                &mut self,
-                ctx: &mut Context<Self::Message>,
-                msg: Self::Message,
-            ) -> Result<(), ()> {
+            fn handle(&mut self, ctx: &mut Self::Context, msg: Self::Message) -> Result<(), ()> {
                 self.handle_count.fetch_add(1, Ordering::SeqCst);
                 if msg.is_some() {
                     ctx.receive_deadline = msg;
@@ -948,7 +944,7 @@ mod tests {
                 Ok(())
             }
 
-            fn deadline_passed(&mut self, _: &mut Context<Self::Message>, _: Instant) {
+            fn deadline_passed(&mut self, _: &mut Self::Context, _: Instant) {
                 self.timeout_count.fetch_add(1, Ordering::SeqCst);
             }
         }
