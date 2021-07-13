@@ -53,6 +53,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub mod timed;
+
 #[cfg(test)]
 pub mod testing;
 
@@ -626,6 +628,7 @@ pub trait Actor {
     type Message: Send + 'static;
     /// The type to return on error in the handle method.
     type Error: std::fmt::Debug;
+    /// What kind of context this actor accepts. Usually [`Context<Self::Message>`].
     type Context;
 
     /// The primary function of this trait, allowing an actor to handle incoming messages of a certain type.
