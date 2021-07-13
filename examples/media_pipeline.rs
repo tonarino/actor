@@ -34,6 +34,7 @@ mod actors {
     pub struct ShutdownActor;
 
     impl Actor for ShutdownActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = ();
 
@@ -64,6 +65,7 @@ mod actors {
     }
 
     impl Actor for VideoCaptureActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = VideoCaptureMessage;
 
@@ -102,6 +104,7 @@ mod actors {
     }
 
     impl Actor for VideoEncodeActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = MediaFrame;
 
@@ -141,6 +144,7 @@ mod actors {
     }
 
     impl Actor for AudioCaptureActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = AudioCaptureMessage;
 
@@ -180,6 +184,7 @@ mod actors {
     }
 
     impl Actor for AudioEncodeActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = MediaFrame;
 
@@ -218,6 +223,7 @@ mod actors {
     }
 
     impl Actor for NetworkSenderActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = EncodedMediaFrame;
 
@@ -254,6 +260,7 @@ mod actors {
     }
 
     impl Actor for NetworkReceiverActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = EncodedMediaFrame;
 
@@ -290,6 +297,7 @@ mod actors {
     }
 
     impl Actor for VideoDecodeActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = EncodedMediaFrame;
 
@@ -326,6 +334,7 @@ mod actors {
     }
 
     impl Actor for AudioDecodeActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = EncodedMediaFrame;
 
@@ -360,6 +369,7 @@ mod actors {
     }
 
     impl Actor for AudioPlaybackActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = MediaFrame;
 
@@ -394,6 +404,7 @@ mod actors {
     }
 
     impl Actor for VideoDisplayActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = MediaFrame;
 

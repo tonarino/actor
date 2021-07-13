@@ -14,6 +14,7 @@
 //!
 //! struct TestActor {}
 //! impl Actor for TestActor {
+//!     type Context = Context<Self::Message>;
 //!     type Error = ();
 //!     type Message = usize;
 //!
@@ -229,7 +230,9 @@ pub struct SpawnBuilder<'a, A: Actor, F: FnOnce() -> A> {
     factory: F,
 }
 
-impl<'a, A: 'static + Actor, F: FnOnce() -> A> SpawnBuilder<'a, A, F> {
+impl<'a, A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
+    SpawnBuilder<'a, A, F>
+{
     /// Specify a capacity for the actor's receiving channel.
     pub fn with_capacity(self, capacity: usize) -> Self {
         Self { capacity: Some(capacity), ..self }
@@ -252,7 +255,12 @@ impl<'a, A: 'static + Actor, F: FnOnce() -> A> SpawnBuilder<'a, A, F> {
     }
 }
 
-impl<'a, A: 'static + Actor, F: FnOnce() -> A + Send + 'static> SpawnBuilder<'a, A, F> {
+impl<
+        'a,
+        A: 'static + Actor<Context = Context<<A as Actor>::Message>>,
+        F: FnOnce() -> A + Send + 'static,
+    > SpawnBuilder<'a, A, F>
+{
     /// Spawn this Actor into a new thread managed by the [`System`].
     pub fn spawn(self) -> Result<Addr<A>, ActorError> {
         let factory = self.factory;
@@ -304,7 +312,7 @@ impl System {
     /// Spawn a normal [`Actor`] in the system, returning its address when successful.
     pub fn spawn<A>(&mut self, actor: A) -> Result<Addr<A>, ActorError>
     where
-        A: Actor + Send + 'static,
+        A: Actor<Context = Context<<A as Actor>::Message>> + Send + 'static,
     {
         self.prepare(actor).spawn()
     }
@@ -316,7 +324,7 @@ impl System {
     fn spawn_fn_with_addr<F, A>(&mut self, factory: F, addr: Addr<A>) -> Result<(), ActorError>
     where
         F: FnOnce() -> A + Send + 'static,
-        A: Actor + 'static,
+        A: Actor<Context = Context<<A as Actor>::Message>> + 'static,
     {
         // Hold the lock until the end of the function to prevent the race
         // condition between spawn and shutdown.
@@ -371,7 +379,7 @@ impl System {
     /// will exit once the actor has stopped.
     fn block_on<A>(&mut self, mut actor: A, addr: Addr<A>) -> Result<(), ActorError>
     where
-        A: Actor,
+        A: Actor<Context = Context<<A as Actor>::Message>>,
     {
         // Prevent race condition of spawn and shutdown.
         if !self.is_running() {
@@ -405,7 +413,7 @@ impl System {
         system_handle: &SystemHandle,
     ) -> Result<(), ActorError>
     where
-        A: Actor,
+        A: Actor<Context = Context<<A as Actor>::Message>>,
     {
         loop {
             // Implement optional deadline, see [crossbeam_channel::never()] docs.
@@ -613,11 +621,12 @@ pub trait Actor {
     type Message: Send + 'static;
     /// The type to return on error in the handle method.
     type Error: std::fmt::Debug;
+    type Context;
 
     /// The primary function of this trait, allowing an actor to handle incoming messages of a certain type.
     fn handle(
         &mut self,
-        context: &mut Context<Self::Message>,
+        context: &mut Self::Context,
         message: Self::Message,
     ) -> Result<(), Self::Error>;
 
@@ -625,10 +634,10 @@ pub trait Actor {
     fn name() -> &'static str;
 
     /// An optional callback when the Actor has been started.
-    fn started(&mut self, _context: &mut Context<Self::Message>) {}
+    fn started(&mut self, _context: &mut Self::Context) {}
 
     /// An optional callback when the Actor has been stopped.
-    fn stopped(&mut self, _context: &mut Context<Self::Message>) {}
+    fn stopped(&mut self, _context: &mut Self::Context) {}
 
     /// An optional callback when a deadline has passed.
     ///
@@ -641,6 +650,7 @@ pub trait Actor {
     /// # use {std::{cmp::max, time::{Duration, Instant}}, tonari_actor::{Actor, Context}};
     /// # struct TickingActor;
     /// impl Actor for TickingActor {
+    /// #    type Context = Context<Self::Message>;
     /// #    type Error = ();
     /// #    type Message = ();
     /// #    fn name() -> &'static str { "TickingActor" }
@@ -661,7 +671,7 @@ pub trait Actor {
     ///     }
     /// }
     /// ```
-    fn deadline_passed(&mut self, _context: &mut Context<Self::Message>, _deadline: Instant) {}
+    fn deadline_passed(&mut self, _context: &mut Self::Context, _deadline: Instant) {}
 }
 
 pub struct Addr<A: Actor + ?Sized> {
@@ -822,6 +832,7 @@ mod tests {
 
     struct TestActor;
     impl Actor for TestActor {
+        type Context = Context<Self::Message>;
         type Error = ();
         type Message = usize;
 
@@ -880,6 +891,7 @@ mod tests {
         #[derive(Default)]
         struct LocalActor(Rc<()>);
         impl Actor for LocalActor {
+            type Context = Context<Self::Message>;
             type Error = ();
             type Message = ();
 
@@ -916,6 +928,7 @@ mod tests {
         }
 
         impl Actor for TimeoutActor {
+            type Context = Context<Self::Message>;
             type Error = ();
             type Message = Option<Instant>;
 
