@@ -44,7 +44,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            context: &mut Context<Self::Message>,
+            context: &mut Self::Context,
             _msg: Self::Message,
         ) -> Result<(), Self::Error> {
             context.system_handle.shutdown().expect("ShutdownActor failed to shutdown system");
@@ -75,7 +75,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            context: &mut Context<Self::Message>,
+            context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {
@@ -114,7 +114,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            _context: &mut Context<Self::Message>,
+            _context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {
@@ -154,7 +154,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            context: &mut Context<Self::Message>,
+            context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {
@@ -194,7 +194,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            _context: &mut Context<Self::Message>,
+            _context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {
@@ -233,7 +233,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            _context: &mut Context<Self::Message>,
+            _context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             // Add some fake packetization and network latency here
@@ -270,7 +270,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            _context: &mut Context<Self::Message>,
+            _context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {
@@ -307,7 +307,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            _context: &mut Context<Self::Message>,
+            _context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {
@@ -344,7 +344,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            _context: &mut Context<Self::Message>,
+            _context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {
@@ -379,7 +379,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            _context: &mut Context<Self::Message>,
+            _context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {
@@ -414,7 +414,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            context: &mut Context<Self::Message>,
+            context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {
