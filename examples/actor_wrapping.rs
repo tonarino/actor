@@ -10,12 +10,13 @@ struct LoggingAdapter<A> {
 }
 
 impl<A: Actor> Actor for LoggingAdapter<A> {
+    type Context = A::Context;
     type Error = A::Error;
     type Message = A::Message;
 
     fn handle(
         &mut self,
-        context: &mut Context<Self::Message>,
+        context: &mut Self::Context,
         message: Self::Message,
     ) -> Result<(), Self::Error> {
         debug!("LoggingAdapter: handle()");
@@ -26,17 +27,17 @@ impl<A: Actor> Actor for LoggingAdapter<A> {
         A::name()
     }
 
-    fn started(&mut self, context: &mut Context<Self::Message>) {
+    fn started(&mut self, context: &mut Self::Context) {
         debug!("LoggingAdapter: started()");
         self.inner.started(context)
     }
 
-    fn stopped(&mut self, context: &mut Context<Self::Message>) {
+    fn stopped(&mut self, context: &mut Self::Context) {
         debug!("LoggingAdapter: stopped()");
         self.inner.stopped(context)
     }
 
-    fn deadline_passed(&mut self, context: &mut Context<Self::Message>, deadline: Instant) {
+    fn deadline_passed(&mut self, context: &mut Self::Context, deadline: Instant) {
         debug!("LoggingAdapter: deadline_passed()");
         self.inner.deadline_passed(context, deadline)
     }
@@ -45,6 +46,7 @@ impl<A: Actor> Actor for LoggingAdapter<A> {
 struct TestActor {}
 
 impl Actor for TestActor {
+    type Context = Context<Self::Message>;
     type Error = Error;
     type Message = String;
 

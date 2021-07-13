@@ -72,6 +72,7 @@ impl DelayActor {
 }
 
 impl Actor for DelayActor {
+    type Context = Context<Self::Message>;
     type Error = Error;
     type Message = DelayedMessage;
 
@@ -108,6 +109,7 @@ struct FinalConsumer {
 }
 
 impl Actor for FinalConsumer {
+    type Context = Context<Self::Message>;
     type Error = Error;
     type Message = String;
 

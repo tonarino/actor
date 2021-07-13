@@ -19,6 +19,7 @@ impl TimerExampleActor {
 }
 
 impl Actor for TimerExampleActor {
+    type Context = Context<Self::Message>;
     type Error = Error;
     type Message = TimerMessage;
 

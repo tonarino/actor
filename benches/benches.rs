@@ -7,6 +7,7 @@ struct ChainLink {
 }
 
 impl Actor for ChainLink {
+    type Context = Context<Self::Message>;
     type Error = ();
     type Message = u64;
 

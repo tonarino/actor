@@ -76,6 +76,7 @@ struct Input {
 }
 
 impl Actor for Input {
+    type Context = Context<Self::Message>;
     type Error = Error;
     type Message = ReadNext;
 
@@ -111,6 +112,7 @@ impl Actor for Input {
 struct Output;
 
 impl Actor for Output {
+    type Context = Context<Self::Message>;
     type Error = Error;
     type Message = Chunk;
 
@@ -171,6 +173,7 @@ impl Mixer {
 }
 
 impl Actor for Mixer {
+    type Context = Context<Self::Message>;
     type Error = Error;
     type Message = MixerInput;
 
@@ -225,6 +228,7 @@ impl Delay {
 }
 
 impl Actor for Delay {
+    type Context = Context<Self::Message>;
     type Error = Error;
     type Message = Chunk;
 
@@ -249,6 +253,7 @@ struct Damper {
 }
 
 impl Actor for Damper {
+    type Context = Context<Self::Message>;
     type Error = Error;
     type Message = Chunk;
 
