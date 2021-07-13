@@ -37,7 +37,11 @@ impl<A: Actor> Actor for LoggingAdapter<A> {
         self.inner.stopped(context)
     }
 
-    fn deadline_passed(&mut self, context: &mut Self::Context, deadline: Instant) {
+    fn deadline_passed(
+        &mut self,
+        context: &mut Self::Context,
+        deadline: Instant,
+    ) -> Result<(), Self::Error> {
         debug!("LoggingAdapter: deadline_passed()");
         self.inner.deadline_passed(context, deadline)
     }
@@ -63,8 +67,12 @@ impl Actor for TestActor {
         context.set_timeout(Some(Duration::from_millis(100)))
     }
 
-    fn deadline_passed(&mut self, context: &mut Self::Context, deadline: Instant) {
-        context.myself.send(format!("deadline was {:?}", deadline)).unwrap();
+    fn deadline_passed(
+        &mut self,
+        context: &mut Self::Context,
+        deadline: Instant,
+    ) -> Result<(), Error> {
+        context.myself.send(format!("deadline was {:?}", deadline)).map_err(Error::from)
     }
 }
 
