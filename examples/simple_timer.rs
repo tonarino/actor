@@ -40,9 +40,14 @@ impl Actor for TimerExampleActor {
         Ok(())
     }
 
-    fn deadline_passed(&mut self, context: &mut Self::Context, deadline: Instant) {
-        context.myself.send(TimerMessage::Periodic).unwrap();
+    fn deadline_passed(
+        &mut self,
+        context: &mut Self::Context,
+        deadline: Instant,
+    ) -> Result<(), Error> {
+        context.myself.send(TimerMessage::Periodic)?;
         context.set_deadline(Some(deadline + Duration::from_secs(1)));
+        Ok(())
     }
 }
 

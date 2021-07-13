@@ -1,6 +1,5 @@
 use anyhow::Error;
 use env_logger::Env;
-use log::warn;
 use std::{
     cmp::Ordering,
     collections::BinaryHeap,
@@ -90,17 +89,20 @@ impl Actor for DelayActor {
         Ok(())
     }
 
-    fn deadline_passed(&mut self, context: &mut Self::Context, _deadline: Instant) {
+    fn deadline_passed(
+        &mut self,
+        context: &mut Self::Context,
+        _deadline: Instant,
+    ) -> Result<(), Error> {
         // Send all messages that should have been sent by now.
         let now = Instant::now();
         while self.queue.peek().map(|m| m.fire_at <= now).unwrap_or(false) {
             let message = self.queue.pop().expect("heap is non-empty, we have just peeked");
-            if let Err(e) = message.message.send() {
-                warn!("Error sending message scheduled at {:?}: {}", message.fire_at, e);
-            }
+            message.message.send()?;
         }
 
         self.schedule_timeout(context);
+        Ok(())
     }
 }
 

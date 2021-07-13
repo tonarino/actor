@@ -444,7 +444,7 @@ impl System {
                         Ok(msg) => {
                             trace!("[{}] message received by {}", system_handle.name, A::name());
                             if let Err(err) = actor.handle(context, msg) {
-                                error!("{} error: {:?}", A::name(), err);
+                                error!("{} handle error: {:?}, shutting down.", A::name(), err);
                                 let _ = context.system_handle.shutdown();
 
                                 return Ok(());
@@ -458,7 +458,12 @@ impl System {
 
                 recv(timeout) -> _ => {
                     let deadline = context.receive_deadline.take().expect("implied by timeout");
-                    actor.deadline_passed(context, deadline);
+                    if let Err(err) = actor.deadline_passed(context, deadline) {
+                        error!("{} deadline_passed error: {:?}, shutting down.", A::name(), err);
+                        let _ = context.system_handle.shutdown();
+
+                        return Ok(());
+                    }
                 }
             };
         }
@@ -657,7 +662,7 @@ pub trait Actor {
     /// #    fn handle(&mut self, _: &mut Self::Context, _: ()) -> Result<(), ()> { Ok(()) }
     ///     // ...
     ///
-    ///     fn deadline_passed(&mut self, context: &mut Self::Context, deadline: Instant) {
+    ///     fn deadline_passed(&mut self, context: &mut Self::Context, deadline: Instant) -> Result<(), ()> {
     ///         // do_periodic_housekeeping();
     ///
     ///         // A: Schedule one second from now (even if delayed); drifting tick.
@@ -668,10 +673,18 @@ pub trait Actor {
     ///
     ///         // C: Schedule one second from deadline, but don't fire multiple times if delayed.
     ///         context.set_deadline(Some(max(deadline + Duration::from_secs(1), Instant::now())));
+    ///
+    ///         Ok(())
     ///     }
     /// }
     /// ```
-    fn deadline_passed(&mut self, _context: &mut Self::Context, _deadline: Instant) {}
+    fn deadline_passed(
+        &mut self,
+        _context: &mut Self::Context,
+        _deadline: Instant,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 pub struct Addr<A: Actor + ?Sized> {
@@ -944,8 +957,9 @@ mod tests {
                 Ok(())
             }
 
-            fn deadline_passed(&mut self, _: &mut Self::Context, _: Instant) {
+            fn deadline_passed(&mut self, _: &mut Self::Context, _: Instant) -> Result<(), ()> {
                 self.timeout_count.fetch_add(1, Ordering::SeqCst);
+                Ok(())
             }
         }
 
