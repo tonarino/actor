@@ -19,6 +19,7 @@ impl TimerExampleActor {
 }
 
 impl Actor for TimerExampleActor {
+    type Context = Context<Self::Message>;
     type Error = Error;
     type Message = TimerMessage;
 
@@ -26,22 +27,27 @@ impl Actor for TimerExampleActor {
         "TimerExampleActor"
     }
 
-    fn started(&mut self, context: &mut Context<Self::Message>) {
+    fn started(&mut self, context: &mut Self::Context) {
         context.set_deadline(Some(self.started_at + Duration::from_millis(1500)));
     }
 
     fn handle(
         &mut self,
-        _context: &mut Context<Self::Message>,
+        _context: &mut Self::Context,
         message: Self::Message,
     ) -> Result<(), Self::Error> {
         println!("Got a message: {:?} at {:?}", message, self.started_at.elapsed());
         Ok(())
     }
 
-    fn deadline_passed(&mut self, context: &mut Context<Self::Message>, deadline: Instant) {
-        context.myself.send(TimerMessage::Periodic).unwrap();
+    fn deadline_passed(
+        &mut self,
+        context: &mut Self::Context,
+        deadline: Instant,
+    ) -> Result<(), Error> {
+        context.myself.send(TimerMessage::Periodic)?;
         context.set_deadline(Some(deadline + Duration::from_secs(1)));
+        Ok(())
     }
 }
 

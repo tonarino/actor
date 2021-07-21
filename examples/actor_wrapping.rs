@@ -10,12 +10,13 @@ struct LoggingAdapter<A> {
 }
 
 impl<A: Actor> Actor for LoggingAdapter<A> {
+    type Context = A::Context;
     type Error = A::Error;
     type Message = A::Message;
 
     fn handle(
         &mut self,
-        context: &mut Context<Self::Message>,
+        context: &mut Self::Context,
         message: Self::Message,
     ) -> Result<(), Self::Error> {
         debug!("LoggingAdapter: handle()");
@@ -26,17 +27,21 @@ impl<A: Actor> Actor for LoggingAdapter<A> {
         A::name()
     }
 
-    fn started(&mut self, context: &mut Context<Self::Message>) {
+    fn started(&mut self, context: &mut Self::Context) {
         debug!("LoggingAdapter: started()");
         self.inner.started(context)
     }
 
-    fn stopped(&mut self, context: &mut Context<Self::Message>) {
+    fn stopped(&mut self, context: &mut Self::Context) {
         debug!("LoggingAdapter: stopped()");
         self.inner.stopped(context)
     }
 
-    fn deadline_passed(&mut self, context: &mut Context<Self::Message>, deadline: Instant) {
+    fn deadline_passed(
+        &mut self,
+        context: &mut Self::Context,
+        deadline: Instant,
+    ) -> Result<(), Self::Error> {
         debug!("LoggingAdapter: deadline_passed()");
         self.inner.deadline_passed(context, deadline)
     }
@@ -45,10 +50,11 @@ impl<A: Actor> Actor for LoggingAdapter<A> {
 struct TestActor {}
 
 impl Actor for TestActor {
+    type Context = Context<Self::Message>;
     type Error = Error;
     type Message = String;
 
-    fn handle(&mut self, context: &mut Context<String>, message: String) -> Result<(), Error> {
+    fn handle(&mut self, context: &mut Self::Context, message: String) -> Result<(), Error> {
         println!("Got a message: {}. Shuting down.", message);
         context.system_handle.shutdown().map_err(Error::from)
     }
@@ -57,12 +63,16 @@ impl Actor for TestActor {
         "TestActor"
     }
 
-    fn started(&mut self, context: &mut Context<String>) {
+    fn started(&mut self, context: &mut Self::Context) {
         context.set_timeout(Some(Duration::from_millis(100)))
     }
 
-    fn deadline_passed(&mut self, context: &mut Context<String>, deadline: Instant) {
-        context.myself.send(format!("deadline was {:?}", deadline)).unwrap();
+    fn deadline_passed(
+        &mut self,
+        context: &mut Self::Context,
+        deadline: Instant,
+    ) -> Result<(), Error> {
+        context.myself.send(format!("deadline was {:?}", deadline)).map_err(Error::from)
     }
 }
 

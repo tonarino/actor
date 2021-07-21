@@ -34,6 +34,7 @@ mod actors {
     pub struct ShutdownActor;
 
     impl Actor for ShutdownActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = ();
 
@@ -43,7 +44,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            context: &mut Context<Self::Message>,
+            context: &mut Self::Context,
             _msg: Self::Message,
         ) -> Result<(), Self::Error> {
             context.system_handle.shutdown().expect("ShutdownActor failed to shutdown system");
@@ -64,6 +65,7 @@ mod actors {
     }
 
     impl Actor for VideoCaptureActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = VideoCaptureMessage;
 
@@ -73,7 +75,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            context: &mut Context<Self::Message>,
+            context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {
@@ -102,6 +104,7 @@ mod actors {
     }
 
     impl Actor for VideoEncodeActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = MediaFrame;
 
@@ -111,7 +114,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            _context: &mut Context<Self::Message>,
+            _context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {
@@ -141,6 +144,7 @@ mod actors {
     }
 
     impl Actor for AudioCaptureActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = AudioCaptureMessage;
 
@@ -150,7 +154,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            context: &mut Context<Self::Message>,
+            context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {
@@ -180,6 +184,7 @@ mod actors {
     }
 
     impl Actor for AudioEncodeActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = MediaFrame;
 
@@ -189,7 +194,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            _context: &mut Context<Self::Message>,
+            _context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {
@@ -218,6 +223,7 @@ mod actors {
     }
 
     impl Actor for NetworkSenderActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = EncodedMediaFrame;
 
@@ -227,7 +233,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            _context: &mut Context<Self::Message>,
+            _context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             // Add some fake packetization and network latency here
@@ -254,6 +260,7 @@ mod actors {
     }
 
     impl Actor for NetworkReceiverActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = EncodedMediaFrame;
 
@@ -263,7 +270,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            _context: &mut Context<Self::Message>,
+            _context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {
@@ -290,6 +297,7 @@ mod actors {
     }
 
     impl Actor for VideoDecodeActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = EncodedMediaFrame;
 
@@ -299,7 +307,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            _context: &mut Context<Self::Message>,
+            _context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {
@@ -326,6 +334,7 @@ mod actors {
     }
 
     impl Actor for AudioDecodeActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = EncodedMediaFrame;
 
@@ -335,7 +344,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            _context: &mut Context<Self::Message>,
+            _context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {
@@ -360,6 +369,7 @@ mod actors {
     }
 
     impl Actor for AudioPlaybackActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = MediaFrame;
 
@@ -369,7 +379,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            _context: &mut Context<Self::Message>,
+            _context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {
@@ -394,6 +404,7 @@ mod actors {
     }
 
     impl Actor for VideoDisplayActor {
+        type Context = Context<Self::Message>;
         type Error = Error;
         type Message = MediaFrame;
 
@@ -403,7 +414,7 @@ mod actors {
 
         fn handle(
             &mut self,
-            context: &mut Context<Self::Message>,
+            context: &mut Self::Context,
             message: Self::Message,
         ) -> Result<(), Self::Error> {
             match message {

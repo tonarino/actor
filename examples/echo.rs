@@ -76,6 +76,7 @@ struct Input {
 }
 
 impl Actor for Input {
+    type Context = Context<Self::Message>;
     type Error = Error;
     type Message = ReadNext;
 
@@ -85,7 +86,7 @@ impl Actor for Input {
 
     fn handle(
         &mut self,
-        context: &mut Context<ReadNext>,
+        context: &mut Self::Context,
         _message: ReadNext,
     ) -> Result<(), Self::Error> {
         // Read data from stdin and decode into correct format.
@@ -111,6 +112,7 @@ impl Actor for Input {
 struct Output;
 
 impl Actor for Output {
+    type Context = Context<Self::Message>;
     type Error = Error;
     type Message = Chunk;
 
@@ -118,7 +120,7 @@ impl Actor for Output {
         "Output"
     }
 
-    fn handle(&mut self, _context: &mut Context<Chunk>, message: Chunk) -> Result<(), Self::Error> {
+    fn handle(&mut self, _context: &mut Self::Context, message: Chunk) -> Result<(), Self::Error> {
         let mut buffered_stdout = BufWriter::new(stdout());
         for sample in message.iter() {
             for bytes in sample.iter().map(|s| s.to_ne_bytes()) {
@@ -171,6 +173,7 @@ impl Mixer {
 }
 
 impl Actor for Mixer {
+    type Context = Context<Self::Message>;
     type Error = Error;
     type Message = MixerInput;
 
@@ -178,11 +181,7 @@ impl Actor for Mixer {
         "Mixer"
     }
 
-    fn handle(
-        &mut self,
-        _context: &mut Context<MixerInput>,
-        message: MixerInput,
-    ) -> Result<(), Error> {
+    fn handle(&mut self, _context: &mut Self::Context, message: MixerInput) -> Result<(), Error> {
         // Naive implementation that simply overwrites on overflow.
         match message {
             MixerInput::Dry(chunk) => self.dry_buffer = Some(chunk),
@@ -225,6 +224,7 @@ impl Delay {
 }
 
 impl Actor for Delay {
+    type Context = Context<Self::Message>;
     type Error = Error;
     type Message = Chunk;
 
@@ -232,7 +232,7 @@ impl Actor for Delay {
         "Delay"
     }
 
-    fn handle(&mut self, _context: &mut Context<Chunk>, message: Chunk) -> Result<(), Error> {
+    fn handle(&mut self, _context: &mut Self::Context, message: Chunk) -> Result<(), Error> {
         self.buffer[self.index] = message;
 
         // Advance index, reset to zero on overflow.
@@ -249,6 +249,7 @@ struct Damper {
 }
 
 impl Actor for Damper {
+    type Context = Context<Self::Message>;
     type Error = Error;
     type Message = Chunk;
 
@@ -256,7 +257,7 @@ impl Actor for Damper {
         "Damper"
     }
 
-    fn handle(&mut self, _context: &mut Context<Chunk>, message: Chunk) -> Result<(), Error> {
+    fn handle(&mut self, _context: &mut Self::Context, message: Chunk) -> Result<(), Error> {
         // Halve the signal.
         let chunk_slice: Arc<[Sample]> = message.iter().map(|s| [s[0] / 2, s[1] / 2]).collect();
         let chunk: Chunk = chunk_slice.try_into().expect("sample count is correct");

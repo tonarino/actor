@@ -7,6 +7,7 @@ struct ChainLink {
 }
 
 impl Actor for ChainLink {
+    type Context = Context<Self::Message>;
     type Error = ();
     type Message = u64;
 
@@ -16,7 +17,7 @@ impl Actor for ChainLink {
 
     fn handle(
         &mut self,
-        context: &mut Context<Self::Message>,
+        context: &mut Self::Context,
         message: Self::Message,
     ) -> Result<(), Self::Error> {
         if message > 0 {
