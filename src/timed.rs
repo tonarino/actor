@@ -19,7 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// A message that can ne delivered now, at certain time and optionally repeatedly.
+/// A message that can be delivered now, at certain time and optionally repeatedly.
 pub enum TimedMessage<M> {
     Instant { message: M },
     Delayed { message: M, fire_at: Instant },
