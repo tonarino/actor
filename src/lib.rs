@@ -1001,4 +1001,21 @@ mod tests {
 
         system.shutdown().unwrap();
     }
+
+    #[test]
+    fn errors() {
+        let mut system = System::new("hi");
+        let full_actor = system.prepare(TestActor).with_capacity(0).spawn().unwrap();
+        let stopped_actor = system.spawn(TestActor).unwrap().recipient();
+
+        let error = full_actor.send(123).unwrap_err();
+        assert_eq!(error.to_string(), "The channel's capacity is full.");
+        assert_eq!(format!("{:?}", error), "Full");
+
+        system.shutdown().unwrap();
+
+        let error = stopped_actor.send(456usize).unwrap_err();
+        assert_eq!(error.to_string(), "The recipient of the message no longer exists.");
+        assert_eq!(format!("{:?}", error), "Disconnected");
+    }
 }
