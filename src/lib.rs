@@ -94,20 +94,33 @@ impl fmt::Display for ActorError {
 
 impl std::error::Error for ActorError {}
 
-/// Reasons why sending a message to an actor can fail.
-#[derive(Debug)]
-pub enum SendError {
-    /// The channel's capacity is full.
-    Full,
-    /// The recipient of the message no longer exists.
-    Disconnected,
+/// Failures that can occur when sending a message to an actor.
+#[derive(Debug, Clone, Copy)]
+pub struct SendError {
+    recipient_name: &'static str,
+    reason: SendErrorReason,
+}
+
+impl SendError {
+    /// Get the name of the intended recipient.
+    pub fn recipient_name(&self) -> &'static str {
+        self.recipient_name
+    }
+
+    /// Get the reason why sending has failed.
+    pub fn reason(&self) -> SendErrorReason {
+        self.reason
+    }
 }
 
 impl fmt::Display for SendError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SendError::Full => write!(f, "The channel's capacity is full."),
-            SendError::Disconnected => DisconnectedError.fmt(f),
+        let recipient_name = self.recipient_name;
+        match self.reason {
+            SendErrorReason::Full => {
+                write!(f, "The capacity of {}'s channel is full.", recipient_name)
+            },
+            SendErrorReason::Disconnected => DisconnectedError { recipient_name }.fmt(f),
         }
     }
 }
@@ -115,18 +128,29 @@ impl fmt::Display for SendError {
 impl std::error::Error for SendError {}
 
 /// The actor message channel is disconnected.
-#[derive(Debug)]
-pub struct DisconnectedError;
+#[derive(Debug, Clone, Copy)]
+pub struct DisconnectedError {
+    recipient_name: &'static str,
+}
 
 impl fmt::Display for DisconnectedError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "The recipient of the message no longer exists.")
+        write!(f, "The recipient of the message ({}) no longer exists.", self.recipient_name)
     }
 }
 
 impl std::error::Error for DisconnectedError {}
 
-impl<M> From<channel::TrySendError<M>> for SendError {
+/// Reasons why sending a message to an actor can fail.
+#[derive(Debug, Clone, Copy)]
+pub enum SendErrorReason {
+    /// The channel's capacity is full.
+    Full,
+    /// The recipient of the message no longer exists.
+    Disconnected,
+}
+
+impl<M> From<channel::TrySendError<M>> for SendErrorReason {
     fn from(orig: channel::TrySendError<M>) -> Self {
         match orig {
             channel::TrySendError::Full(_) => Self::Full,
@@ -729,7 +753,8 @@ impl<A: Actor> Addr<A> {
         let (control_tx, control_rx) = channel::bounded(DEFAULT_CHANNEL_CAPACITY);
 
         let message_tx = Arc::new(message_tx);
-        Self { recipient: Recipient { message_tx, control_tx }, message_rx, control_rx }
+        let name = A::name();
+        Self { recipient: Recipient { message_tx, control_tx, name }, message_rx, control_rx }
     }
 
     /// "Genericize" an address to, rather than point to a specific actor,
@@ -740,6 +765,7 @@ impl<A: Actor> Addr<A> {
             // Each level of boxing adds one .into() call, so box here to convert A::Message to M.
             message_tx: Arc::new(self.recipient.message_tx.clone()),
             control_tx: self.recipient.control_tx.clone(),
+            name: A::name(),
         }
     }
 }
@@ -749,13 +775,18 @@ impl<A: Actor> Addr<A> {
 pub struct Recipient<M> {
     message_tx: Arc<dyn SenderTrait<M>>,
     control_tx: Sender<Control>,
+    name: &'static str,
 }
 
 // #[derive(Clone)] adds Clone bound to M, which is not necessary.
 // https://github.com/rust-lang/rust/issues/26925
 impl<M> Clone for Recipient<M> {
     fn clone(&self) -> Self {
-        Self { message_tx: self.message_tx.clone(), control_tx: self.control_tx.clone() }
+        Self {
+            message_tx: self.message_tx.clone(),
+            control_tx: self.control_tx.clone(),
+            name: self.name,
+        }
     }
 }
 
@@ -763,7 +794,9 @@ impl<M> Recipient<M> {
     /// Non-blocking call to send a message. Use this if you need to react when
     /// the channel is full. See [`SendResultExt`] trait for convenient handling of errors.
     pub fn send(&self, message: M) -> Result<(), SendError> {
-        self.message_tx.try_send(message).map_err(SendError::from)
+        self.message_tx
+            .try_send(message)
+            .map_err(|reason| SendError { recipient_name: self.name, reason })
     }
 
     /// The remaining capacity for the message channel.
@@ -775,31 +808,31 @@ impl<M> Recipient<M> {
 
 pub trait SendResultExt {
     /// Don't return an `Err` when the recipient is at full capacity, run `func` in such a case instead.
-    fn on_full<F: FnOnce()>(self, func: F) -> Result<(), DisconnectedError>;
+    fn on_full<F: FnOnce(&'static str)>(self, func: F) -> Result<(), DisconnectedError>;
 
     /// Don't return an `Err` when the recipient is at full capacity.
     fn ignore_on_full(self) -> Result<(), DisconnectedError>;
 }
 
 impl SendResultExt for Result<(), SendError> {
-    fn on_full<F: FnOnce()>(self, callback: F) -> Result<(), DisconnectedError> {
-        self.or_else(|e| match e {
-            SendError::Full => {
-                callback();
+    fn on_full<F: FnOnce(&'static str)>(self, callback: F) -> Result<(), DisconnectedError> {
+        self.or_else(|e| match e.reason {
+            SendErrorReason::Full => {
+                callback(e.recipient_name);
                 Ok(())
             },
-            _ => Err(DisconnectedError),
+            _ => Err(DisconnectedError { recipient_name: e.recipient_name }),
         })
     }
 
     fn ignore_on_full(self) -> Result<(), DisconnectedError> {
-        self.on_full(|| ())
+        self.on_full(|_| ())
     }
 }
 
 /// Internal trait to generalize over [`Sender`].
 trait SenderTrait<M>: Send + Sync {
-    fn try_send(&self, message: M) -> Result<(), SendError>;
+    fn try_send(&self, message: M) -> Result<(), SendErrorReason>;
 
     fn len(&self) -> usize;
 
@@ -808,8 +841,8 @@ trait SenderTrait<M>: Send + Sync {
 
 /// [`SenderTrait`] is implemented for concrete crossbeam [`Sender`].
 impl<M: Send> SenderTrait<M> for Sender<M> {
-    fn try_send(&self, message: M) -> Result<(), SendError> {
-        self.try_send(message).map_err(SendError::from)
+    fn try_send(&self, message: M) -> Result<(), SendErrorReason> {
+        self.try_send(message).map_err(SendErrorReason::from)
     }
 
     fn len(&self) -> usize {
@@ -821,9 +854,9 @@ impl<M: Send> SenderTrait<M> for Sender<M> {
     }
 }
 
-/// [`SenderTrait`] is also implemented for boxed version of itself, incluling M -> N conversion.
+/// [`SenderTrait`] is also implemented for boxed version of itself, including M -> N conversion.
 impl<M: Into<N>, N> SenderTrait<M> for Arc<dyn SenderTrait<N>> {
-    fn try_send(&self, message: M) -> Result<(), SendError> {
+    fn try_send(&self, message: M) -> Result<(), SendErrorReason> {
         self.deref().try_send(message.into())
     }
 
@@ -1009,13 +1042,19 @@ mod tests {
         let stopped_actor = system.spawn(TestActor).unwrap().recipient();
 
         let error = full_actor.send(123).unwrap_err();
-        assert_eq!(error.to_string(), "The channel's capacity is full.");
-        assert_eq!(format!("{:?}", error), "Full");
+        assert_eq!(error.to_string(), "The capacity of TestActor's channel is full.");
+        assert_eq!(
+            format!("{:?}", error),
+            r#"SendError { recipient_name: "TestActor", reason: Full }"#
+        );
 
         system.shutdown().unwrap();
 
         let error = stopped_actor.send(456usize).unwrap_err();
-        assert_eq!(error.to_string(), "The recipient of the message no longer exists.");
-        assert_eq!(format!("{:?}", error), "Disconnected");
+        assert_eq!(error.to_string(), "The recipient of the message (TestActor) no longer exists.");
+        assert_eq!(
+            format!("{:?}", error),
+            r#"SendError { recipient_name: "TestActor", reason: Disconnected }"#
+        );
     }
 }
