@@ -4,12 +4,14 @@ use env_logger::Env;
 use tonari_actor::{Addr, System, SystemCallbacks};
 
 /// A simplistic representation of a MediaFrame, they just hold frame counters.
+#[derive(Debug)]
 pub enum MediaFrame {
     Video(usize),
     Audio(usize),
 }
 
 /// A simplistic representation of an encoded MediaFrame, they just hold frame counters.
+#[derive(Debug)]
 pub enum EncodedMediaFrame {
     Video(usize),
     Audio(usize),
@@ -22,10 +24,12 @@ mod actors {
     use tonari_actor::{Actor, Context, Recipient};
 
     // Messages
+    #[derive(Debug)]
     pub enum VideoCaptureMessage {
         Capture,
     }
 
+    #[derive(Debug)]
     pub enum AudioCaptureMessage {
         Capture,
     }

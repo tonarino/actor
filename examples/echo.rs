@@ -44,9 +44,11 @@ type Chunk = Arc<[Sample; CHUNK_SAMPLES]>;
 const DELAY_CHUNKS: usize = 60;
 
 /// A chunk of samples that represents the "dry" (original, authentic) signal.
+#[derive(Debug)]
 struct DryChunk(Chunk);
 
 /// A chunk of sample that represents the "wet" (processed, edited) signal.
+#[derive(Debug)]
 struct WetChunk(Chunk);
 
 /// DryChunk converts to (unspecified) Chunk (but not the other way around).
@@ -64,6 +66,7 @@ impl From<WetChunk> for Chunk {
 }
 
 /// Dummy trigger for [`Input`] to read next chunk.
+#[derive(Debug)]
 struct ReadNext;
 
 fn silence_chunk() -> Chunk {
@@ -132,6 +135,7 @@ impl Actor for Output {
 }
 
 /// A chunk that knows whether it is dry or wet.
+#[derive(Debug)]
 enum MixerInput {
     /// The original signal.
     Dry(DryChunk),

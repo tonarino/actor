@@ -15,6 +15,7 @@ use crate::{Actor, Context, Recipient, SendError, SystemHandle};
 use std::{
     cmp::Ordering,
     collections::BinaryHeap,
+    fmt,
     ops::Deref,
     time::{Duration, Instant},
 };
@@ -24,6 +25,26 @@ pub enum TimedMessage<M> {
     Instant { message: M },
     Delayed { message: M, fire_at: Instant },
     Recurring { factory: Box<dyn FnMut() -> M + Send>, fire_at: Instant, interval: Duration },
+}
+
+impl<M: fmt::Debug> fmt::Debug for TimedMessage<M> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TimedMessage::Instant { message } => {
+                f.debug_struct("Instant").field("message", message).finish()
+            },
+            TimedMessage::Delayed { message, fire_at } => f
+                .debug_struct("Delayed")
+                .field("message", message)
+                .field("fire_at", fire_at)
+                .finish(),
+            TimedMessage::Recurring { fire_at, interval, .. } => f
+                .debug_struct("Recurring")
+                .field("fire_at", fire_at)
+                .field("interval", interval)
+                .finish_non_exhaustive(),
+        }
+    }
 }
 
 /// This implementation allows sending direct unwrapped messages to wrapped actors.
@@ -96,7 +117,7 @@ pub struct Timed<A: Actor> {
     queue: BinaryHeap<QueueItem<A::Message>>,
 }
 
-impl<M: Send + 'static, A: Actor<Context = TimedContext<M>, Message = M>> Timed<A> {
+impl<M: Send + fmt::Debug + 'static, A: Actor<Context = TimedContext<M>, Message = M>> Timed<A> {
     pub fn new(inner: A) -> Self {
         Self { inner, queue: Default::default() }
     }
@@ -107,7 +128,9 @@ impl<M: Send + 'static, A: Actor<Context = TimedContext<M>, Message = M>> Timed<
     }
 }
 
-impl<M: Send + 'static, A: Actor<Context = TimedContext<M>, Message = M>> Actor for Timed<A> {
+impl<M: Send + fmt::Debug + 'static, A: Actor<Context = TimedContext<M>, Message = M>> Actor
+    for Timed<A>
+{
     type Context = Context<Self::Message>;
     type Error = A::Error;
     type Message = TimedMessage<M>;
