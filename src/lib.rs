@@ -807,7 +807,8 @@ impl<M> Recipient<M> {
 }
 
 pub trait SendResultExt {
-    /// Don't return an `Err` when the recipient is at full capacity, run `func` in such a case instead.
+    /// Don't return an `Err` when the recipient is at full capacity, run `func(receiver_name)`
+    /// in such a case instead. `receiver_name` is the name of the intended recipient.
     fn on_full<F: FnOnce(&'static str)>(self, func: F) -> Result<(), DisconnectedError>;
 
     /// Don't return an `Err` when the recipient is at full capacity.
@@ -1039,6 +1040,7 @@ mod tests {
     fn errors() {
         let mut system = System::new("hi");
         let full_actor = system.prepare(TestActor).with_capacity(0).spawn().unwrap();
+        // Convert to `Recipient` so that we don't keep the receiving side of `Addr` alive.
         let stopped_actor = system.spawn(TestActor).unwrap().recipient();
 
         let error = full_actor.send(123).unwrap_err();
