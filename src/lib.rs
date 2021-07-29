@@ -97,20 +97,10 @@ impl std::error::Error for ActorError {}
 /// Failures that can occur when sending a message to an actor.
 #[derive(Debug, Clone, Copy)]
 pub struct SendError {
-    recipient_name: &'static str,
-    reason: SendErrorReason,
-}
-
-impl SendError {
-    /// Get the name of the intended recipient.
-    pub fn recipient_name(&self) -> &'static str {
-        self.recipient_name
-    }
-
-    /// Get the reason why sending has failed.
-    pub fn reason(&self) -> SendErrorReason {
-        self.reason
-    }
+    /// The name of the intended recipient.
+    pub recipient_name: &'static str,
+    /// The reason why sending has failed.
+    pub reason: SendErrorReason,
 }
 
 impl fmt::Display for SendError {
@@ -130,7 +120,8 @@ impl std::error::Error for SendError {}
 /// The actor message channel is disconnected.
 #[derive(Debug, Clone, Copy)]
 pub struct DisconnectedError {
-    recipient_name: &'static str,
+    /// The name of the intended recipient.
+    pub recipient_name: &'static str,
 }
 
 impl fmt::Display for DisconnectedError {
