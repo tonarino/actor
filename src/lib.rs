@@ -65,10 +65,6 @@ static DEFAULT_CHANNEL_CAPACITY: usize = 5;
 pub enum ActorError {
     /// The system has stopped, and a new actor can not be started.
     SystemStopped { actor_name: &'static str },
-    /// The actor message channel is disconnected.
-    ChannelDisconnected { actor_name: &'static str },
-    /// The actor control channel is disconnected.
-    ControlChannelDisconnected { actor_name: &'static str },
     /// Failed to spawn an actor thread.
     SpawnFailed { actor_name: &'static str },
     /// A panic occurred inside an actor thread.
@@ -80,12 +76,6 @@ impl fmt::Display for ActorError {
         match self {
             ActorError::SystemStopped { actor_name } => {
                 write!(f, "The system is not running. The actor {} can not be started.", actor_name)
-            },
-            ActorError::ChannelDisconnected { actor_name } => {
-                write!(f, "The message channel is disconnected for the actor {}.", actor_name)
-            },
-            ActorError::ControlChannelDisconnected { actor_name } => {
-                write!(f, "The control channel is disconnected for the actor {}.", actor_name)
             },
             ActorError::SpawnFailed { actor_name } => {
                 write!(f, "Failed to spawn a thread for the actor {}.", actor_name)
@@ -370,13 +360,7 @@ impl System {
                 actor.started(&mut context);
                 debug!("[{}] started actor: {}", system_handle.name, A::name());
 
-                let actor_result =
-                    Self::run_actor_select_loop(actor, addr, &mut context, &system_handle);
-                if let Err(err) = &actor_result {
-                    error!("run_actor_select_loop returned an error: {}", err);
-                }
-
-                actor_result
+                Self::run_actor_select_loop(actor, addr, &mut context, &system_handle);
             })
             .map_err(|_| ActorError::SpawnFailed { actor_name: A::name() })?;
 
@@ -415,7 +399,7 @@ impl System {
 
         actor.started(&mut context);
         debug!("[{}] started actor: {}", system_handle.name, A::name());
-        Self::run_actor_select_loop(actor, addr, &mut context, system_handle)?;
+        Self::run_actor_select_loop(actor, addr, &mut context, system_handle);
 
         // Wait for the system to shutdown before we exit, otherwise the process
         // would exit before the system is completely shutdown
@@ -433,8 +417,7 @@ impl System {
         addr: Addr<A>,
         context: &mut Context<A::Message>,
         system_handle: &SystemHandle,
-    ) -> Result<(), ActorError>
-    where
+    ) where
         A: Actor<Context = Context<<A as Actor>::Message>>,
     {
         /// What can be received during one actor event loop.
@@ -442,8 +425,6 @@ impl System {
             Control(Control),
             Message(M),
             Timeout,
-            /// Receiving an error stops the actor thread.
-            Error(ActorError),
         }
 
         loop {
@@ -454,15 +435,13 @@ impl System {
                 .recv(&addr.control_rx, |msg| match msg {
                     Ok(control) => Received::Control(control),
                     Err(RecvError::Disconnected) => {
-                        Received::Error(ActorError::ControlChannelDisconnected {
-                            actor_name: A::name(),
-                        })
+                        unreachable!("We keep control_tx alive through addr, should no happen.")
                     },
                 })
                 .recv(&addr.message_rx, |msg| match msg {
                     Ok(msg) => Received::Message(msg),
                     Err(RecvError::Disconnected) => {
-                        Received::Error(ActorError::ChannelDisconnected { actor_name: A::name() })
+                        unreachable!("We keep message_tx alive through addr, should no happen.")
                     },
                 });
 
@@ -481,7 +460,7 @@ impl System {
                 Received::Control(Control::Stop) => {
                     actor.stopped(context);
                     debug!("[{}] stopped actor: {}", system_handle.name, A::name());
-                    return Ok(());
+                    return;
                 },
                 Received::Message(msg) => {
                     trace!("[{}] message received by {}", system_handle.name, A::name());
@@ -494,7 +473,7 @@ impl System {
                         );
                         let _ = system_handle.shutdown();
 
-                        return Ok(());
+                        return;
                     }
                 },
                 Received::Timeout => {
@@ -508,17 +487,8 @@ impl System {
                         );
                         let _ = system_handle.shutdown();
 
-                        return Ok(());
+                        return;
                     }
-                },
-                Received::Error(err) => {
-                    warn!(
-                        "[{}] {} receive error: {:?}, aborting actor loop.",
-                        system_handle.name,
-                        A::name(),
-                        err
-                    );
-                    return Err(err);
                 },
             }
         }
@@ -598,19 +568,9 @@ impl SystemHandle {
 
                             debug!("[{}] [{}] joining actor thread: {}", self.name, i, actor_name);
 
-                            let join_result = thread_handle
-                                .join()
-                                .map_err(|e| {
-                                    error!("a panic inside actor thread {}: {:?}", actor_name, e)
-                                })
-                                .and_then(|actor_result| {
-                                    actor_result.map_err(|e| {
-                                        error!(
-                                            "actor thread {} returned an error: {:?}",
-                                            actor_name, e
-                                        )
-                                    })
-                                });
+                            let join_result = thread_handle.join().map_err(|e| {
+                                error!("a panic inside actor thread {}: {:?}", actor_name, e)
+                            });
 
                             debug!("[{}] [{}] joined actor thread:  {}", self.name, i, actor_name);
                             join_result.err()
@@ -645,7 +605,7 @@ impl SystemHandle {
 
 enum RegistryEntry {
     CurrentThread(Sender<Control>),
-    BackgroundThread(Sender<Control>, thread::JoinHandle<Result<(), ActorError>>),
+    BackgroundThread(Sender<Control>, thread::JoinHandle<()>),
 }
 
 impl RegistryEntry {
