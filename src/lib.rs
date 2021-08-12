@@ -437,6 +437,15 @@ impl System {
     where
         A: Actor<Context = Context<<A as Actor>::Message>>,
     {
+        /// What can be received during one actor event loop.
+        enum Received<M> {
+            Control(Control),
+            Message(M),
+            Timeout,
+            /// Receiving an error stops the actor thread.
+            Error(ActorError),
+        }
+
         loop {
             // We don't handle the messages (control and actor's) directly in .recv(), that would
             // lead to mutably borrowing actor multiple times. Read into intermediate enum instead.
@@ -528,15 +537,6 @@ impl Deref for System {
     fn deref(&self) -> &Self::Target {
         &self.handle
     }
-}
-
-/// What can be received during one actor event loop.
-enum Received<M> {
-    Control(Control),
-    Message(M),
-    Timeout,
-    /// Receiving an error stops the actor thread.
-    Error(ActorError),
 }
 
 impl SystemHandle {
