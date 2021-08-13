@@ -435,13 +435,13 @@ impl System {
                 .recv(&addr.control_rx, |msg| match msg {
                     Ok(control) => Received::Control(control),
                     Err(RecvError::Disconnected) => {
-                        unreachable!("We keep control_tx alive through addr, should no happen.")
+                        panic!("We keep control_tx alive through addr, should not happen.")
                     },
                 })
                 .recv(&addr.message_rx, |msg| match msg {
                     Ok(msg) => Received::Message(msg),
                     Err(RecvError::Disconnected) => {
-                        unreachable!("We keep message_tx alive through addr, should no happen.")
+                        panic!("We keep message_tx alive through addr, should not happen.")
                     },
                 });
 
