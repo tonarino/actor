@@ -42,7 +42,7 @@
 //! ```
 //!
 
-use crossbeam_channel::{self as channel, select, Receiver, Sender};
+use flume::{select::SelectError, Receiver, RecvError, Selector, Sender};
 use log::*;
 use parking_lot::{Mutex, RwLock};
 use std::{
@@ -65,8 +65,6 @@ static DEFAULT_CHANNEL_CAPACITY: usize = 5;
 pub enum ActorError {
     /// The system has stopped, and a new actor can not be started.
     SystemStopped { actor_name: &'static str },
-    /// The actor message channel is disconnected.
-    ChannelDisconnected { actor_name: &'static str },
     /// Failed to spawn an actor thread.
     SpawnFailed { actor_name: &'static str },
     /// A panic occurred inside an actor thread.
@@ -78,9 +76,6 @@ impl fmt::Display for ActorError {
         match self {
             ActorError::SystemStopped { actor_name } => {
                 write!(f, "The system is not running. The actor {} can not be started.", actor_name)
-            },
-            ActorError::ChannelDisconnected { actor_name } => {
-                write!(f, "The message channel is disconnected for the actor {}.", actor_name)
             },
             ActorError::SpawnFailed { actor_name } => {
                 write!(f, "Failed to spawn a thread for the actor {}.", actor_name)
@@ -141,11 +136,11 @@ pub enum SendErrorReason {
     Disconnected,
 }
 
-impl<M> From<channel::TrySendError<M>> for SendErrorReason {
-    fn from(orig: channel::TrySendError<M>) -> Self {
+impl<M> From<flume::TrySendError<M>> for SendErrorReason {
+    fn from(orig: flume::TrySendError<M>) -> Self {
         match orig {
-            channel::TrySendError::Full(_) => Self::Full,
-            channel::TrySendError::Disconnected(_) => Self::Disconnected,
+            flume::TrySendError::Full(_) => Self::Full,
+            flume::TrySendError::Disconnected(_) => Self::Disconnected,
         }
     }
 }
@@ -365,13 +360,7 @@ impl System {
                 actor.started(&mut context);
                 debug!("[{}] started actor: {}", system_handle.name, A::name());
 
-                let actor_result =
-                    Self::run_actor_select_loop(actor, addr, &mut context, &system_handle);
-                if let Err(err) = &actor_result {
-                    error!("run_actor_select_loop returned an error: {}", err);
-                }
-
-                actor_result
+                Self::run_actor_select_loop(actor, addr, &mut context, &system_handle);
             })
             .map_err(|_| ActorError::SpawnFailed { actor_name: A::name() })?;
 
@@ -410,7 +399,7 @@ impl System {
 
         actor.started(&mut context);
         debug!("[{}] started actor: {}", system_handle.name, A::name());
-        Self::run_actor_select_loop(actor, addr, &mut context, system_handle)?;
+        Self::run_actor_select_loop(actor, addr, &mut context, system_handle);
 
         // Wait for the system to shutdown before we exit, otherwise the process
         // would exit before the system is completely shutdown
@@ -428,61 +417,80 @@ impl System {
         addr: Addr<A>,
         context: &mut Context<A::Message>,
         system_handle: &SystemHandle,
-    ) -> Result<(), ActorError>
-    where
+    ) where
         A: Actor<Context = Context<<A as Actor>::Message>>,
     {
+        /// What can be received during one actor event loop.
+        enum Received<M> {
+            Control(Control),
+            Message(M),
+            Timeout,
+        }
+
         loop {
-            // Implement optional deadline, see [crossbeam_channel::never()] docs.
-            let timeout = match context.receive_deadline {
-                Some(deadline) => {
-                    crossbeam_channel::after(deadline.saturating_duration_since(Instant::now()))
-                },
-                None => crossbeam_channel::never(),
+            // We don't handle the messages (control and actor's) directly in .recv(), that would
+            // lead to mutably borrowing actor multiple times. Read into intermediate enum instead.
+            // The order of .recv() calls is significant and determines priority.
+            let selector = Selector::new()
+                .recv(&addr.control_rx, |msg| match msg {
+                    Ok(control) => Received::Control(control),
+                    Err(RecvError::Disconnected) => {
+                        panic!("We keep control_tx alive through addr, should not happen.")
+                    },
+                })
+                .recv(&addr.message_rx, |msg| match msg {
+                    Ok(msg) => Received::Message(msg),
+                    Err(RecvError::Disconnected) => {
+                        panic!("We keep message_tx alive through addr, should not happen.")
+                    },
+                });
+
+            // Wait for some event to happen, with a timeout if set.
+            let received = if let Some(deadline) = context.receive_deadline {
+                match selector.wait_deadline(deadline) {
+                    Ok(received) => received,
+                    Err(SelectError::Timeout) => Received::Timeout,
+                }
+            } else {
+                selector.wait()
             };
 
-            select! {
-                recv(addr.control_rx) -> msg => {
-                    match msg {
-                        Ok(Control::Stop) => {
-                            actor.stopped(context);
-                            debug!("[{}] stopped actor: {}", system_handle.name, A::name());
-                            return Ok(());
-                        },
-                        Err(_) => {
-                            error!("[{}] control channel empty and disconnected. ending actor thread.", A::name());
-                            return Ok(());
-                        }
+            // Process the event. Returning ends actor loop, the normal operation is to fall through.
+            match received {
+                Received::Control(Control::Stop) => {
+                    actor.stopped(context);
+                    debug!("[{}] stopped actor: {}", system_handle.name, A::name());
+                    return;
+                },
+                Received::Message(msg) => {
+                    trace!("[{}] message received by {}", system_handle.name, A::name());
+                    if let Err(err) = actor.handle(context, msg) {
+                        error!(
+                            "[{}] {} handle error: {:?}, shutting down.",
+                            system_handle.name,
+                            A::name(),
+                            err
+                        );
+                        let _ = system_handle.shutdown();
+
+                        return;
                     }
                 },
-
-                recv(addr.message_rx) -> msg => {
-                    match msg {
-                        Ok(msg) => {
-                            trace!("[{}] message received by {}", system_handle.name, A::name());
-                            if let Err(err) = actor.handle(context, msg) {
-                                error!("{} handle error: {:?}, shutting down.", A::name(), err);
-                                let _ = context.system_handle.shutdown();
-
-                                return Ok(());
-                            }
-                        },
-                        Err(_) => {
-                            return Err(ActorError::ChannelDisconnected{actor_name:A::name()});
-                        }
-                    }
-                },
-
-                recv(timeout) -> _ => {
+                Received::Timeout => {
                     let deadline = context.receive_deadline.take().expect("implied by timeout");
                     if let Err(err) = actor.deadline_passed(context, deadline) {
-                        error!("{} deadline_passed error: {:?}, shutting down.", A::name(), err);
-                        let _ = context.system_handle.shutdown();
+                        error!(
+                            "[{}] {} deadline_passed error: {:?}, shutting down.",
+                            system_handle.name,
+                            A::name(),
+                            err
+                        );
+                        let _ = system_handle.shutdown();
 
-                        return Ok(());
+                        return;
                     }
-                }
-            };
+                },
+            }
         }
     }
 }
@@ -560,19 +568,9 @@ impl SystemHandle {
 
                             debug!("[{}] [{}] joining actor thread: {}", self.name, i, actor_name);
 
-                            let join_result = thread_handle
-                                .join()
-                                .map_err(|e| {
-                                    error!("a panic inside actor thread {}: {:?}", actor_name, e)
-                                })
-                                .and_then(|actor_result| {
-                                    actor_result.map_err(|e| {
-                                        error!(
-                                            "actor thread {} returned an error: {:?}",
-                                            actor_name, e
-                                        )
-                                    })
-                                });
+                            let join_result = thread_handle.join().map_err(|e| {
+                                error!("a panic inside actor thread {}: {:?}", actor_name, e)
+                            });
 
                             debug!("[{}] [{}] joined actor thread:  {}", self.name, i, actor_name);
                             join_result.err()
@@ -607,7 +605,7 @@ impl SystemHandle {
 
 enum RegistryEntry {
     CurrentThread(Sender<Control>),
-    BackgroundThread(Sender<Control>, thread::JoinHandle<Result<(), ActorError>>),
+    BackgroundThread(Sender<Control>, thread::JoinHandle<()>),
 }
 
 impl RegistryEntry {
@@ -740,8 +738,8 @@ where
 
 impl<A: Actor> Addr<A> {
     pub fn with_capacity(capacity: usize) -> Self {
-        let (message_tx, message_rx) = channel::bounded::<A::Message>(capacity);
-        let (control_tx, control_rx) = channel::bounded(DEFAULT_CHANNEL_CAPACITY);
+        let (message_tx, message_rx) = flume::bounded::<A::Message>(capacity);
+        let (control_tx, control_rx) = flume::bounded(DEFAULT_CHANNEL_CAPACITY);
 
         let message_tx = Arc::new(message_tx);
         let name = A::name();
@@ -831,7 +829,7 @@ trait SenderTrait<M>: Send + Sync {
     fn capacity(&self) -> Option<usize>;
 }
 
-/// [`SenderTrait`] is implemented for concrete crossbeam [`Sender`].
+/// [`SenderTrait`] is implemented for concrete flume [`Sender`].
 impl<M: Send> SenderTrait<M> for Sender<M> {
     fn try_send(&self, message: M) -> Result<(), SendErrorReason> {
         self.try_send(message).map_err(SendErrorReason::from)

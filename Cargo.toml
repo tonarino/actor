@@ -11,7 +11,8 @@ readme = "README.md"
 keywords = ["actor", "threads"]
 
 [dependencies]
-crossbeam-channel = "0.5"
+# Make sure the eventual-fairness feature is disabled for priority queues.
+flume = { version = "0.10", default-features = false, features = ["select"] }
 log = "0.4"
 parking_lot = "0.11"
 
