@@ -787,12 +787,6 @@ impl<M> Recipient<M> {
             .try_send(message)
             .map_err(|reason| SendError { recipient_name: self.name, reason })
     }
-
-    /// The remaining capacity for the message channel.
-    pub fn remaining_capacity(&self) -> Option<usize> {
-        let message_tx = &self.message_tx as &dyn SenderTrait<M>;
-        message_tx.capacity().map(|capacity| capacity - message_tx.len())
-    }
 }
 
 pub trait SendResultExt {
@@ -823,10 +817,6 @@ impl SendResultExt for Result<(), SendError> {
 /// Internal trait to generalize over [`Sender`].
 trait SenderTrait<M>: Send + Sync {
     fn try_send(&self, message: M) -> Result<(), SendErrorReason>;
-
-    fn len(&self) -> usize;
-
-    fn capacity(&self) -> Option<usize>;
 }
 
 /// [`SenderTrait`] is implemented for concrete flume [`Sender`].
@@ -834,28 +824,12 @@ impl<M: Send> SenderTrait<M> for Sender<M> {
     fn try_send(&self, message: M) -> Result<(), SendErrorReason> {
         self.try_send(message).map_err(SendErrorReason::from)
     }
-
-    fn len(&self) -> usize {
-        self.len()
-    }
-
-    fn capacity(&self) -> Option<usize> {
-        self.capacity()
-    }
 }
 
 /// [`SenderTrait`] is also implemented for boxed version of itself, including M -> N conversion.
 impl<M: Into<N>, N> SenderTrait<M> for Arc<dyn SenderTrait<N>> {
     fn try_send(&self, message: M) -> Result<(), SendErrorReason> {
         self.deref().try_send(message.into())
-    }
-
-    fn len(&self) -> usize {
-        self.deref().len()
-    }
-
-    fn capacity(&self) -> Option<usize> {
-        self.deref().capacity()
     }
 }
 
