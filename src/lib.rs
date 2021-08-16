@@ -438,6 +438,12 @@ impl System {
                         panic!("We keep control_tx alive through addr, should not happen.")
                     },
                 })
+                .recv(&addr.priority_rx, |msg| match msg {
+                    Ok(msg) => Received::Message(msg),
+                    Err(RecvError::Disconnected) => {
+                        panic!("We keep message_tx alive through addr, should not happen.")
+                    },
+                })
                 .recv(&addr.message_rx, |msg| match msg {
                     Ok(msg) => Received::Message(msg),
                     Err(RecvError::Disconnected) => {
@@ -654,6 +660,12 @@ pub trait Actor {
     /// The name of the Actor - used only for logging/debugging.
     fn name() -> &'static str;
 
+    /// Determine priority of a `message` before it is sent to this actor.
+    /// Default implementation returns [`Priority::Normal`].
+    fn priority(_message: &Self::Message) -> Priority {
+        Priority::Normal
+    }
+
     /// An optional callback when the Actor has been started.
     fn started(&mut self, _context: &mut Self::Context) {}
 
@@ -705,6 +717,7 @@ pub trait Actor {
 
 pub struct Addr<A: Actor + ?Sized> {
     recipient: Recipient<A::Message>,
+    priority_rx: Receiver<A::Message>,
     message_rx: Receiver<A::Message>,
     control_rx: Receiver<Control>,
 }
@@ -719,6 +732,7 @@ impl<A: Actor> Clone for Addr<A> {
     fn clone(&self) -> Self {
         Self {
             recipient: self.recipient.clone(),
+            priority_rx: self.priority_rx.clone(),
             message_rx: self.message_rx.clone(),
             control_rx: self.control_rx.clone(),
         }
@@ -738,12 +752,22 @@ where
 
 impl<A: Actor> Addr<A> {
     pub fn with_capacity(capacity: usize) -> Self {
+        let (priority_tx, priority_rx) = flume::bounded::<A::Message>(capacity);
         let (message_tx, message_rx) = flume::bounded::<A::Message>(capacity);
         let (control_tx, control_rx) = flume::bounded(DEFAULT_CHANNEL_CAPACITY);
 
-        let message_tx = Arc::new(message_tx);
+        let message_tx = Arc::new(MessageSender {
+            high: priority_tx,
+            normal: message_tx,
+            get_priority: A::priority,
+        });
         let name = A::name();
-        Self { recipient: Recipient { message_tx, control_tx, name }, message_rx, control_rx }
+        Self {
+            recipient: Recipient { message_tx, control_tx, name },
+            priority_rx,
+            message_rx,
+            control_rx,
+        }
     }
 
     /// "Genericize" an address to, rather than point to a specific actor,
@@ -757,6 +781,13 @@ impl<A: Actor> Addr<A> {
             name: A::name(),
         }
     }
+}
+
+/// Urgency of a given message. All high-priority messages are delivered before normal priority.
+#[derive(Clone, Copy, Debug)]
+pub enum Priority {
+    Normal,
+    High,
 }
 
 /// Similar to [`Addr`], but rather than pointing to a specific actor,
@@ -780,8 +811,8 @@ impl<M> Clone for Recipient<M> {
 }
 
 impl<M> Recipient<M> {
-    /// Non-blocking call to send a message. Use this if you need to react when
-    /// the channel is full. See [`SendResultExt`] trait for convenient handling of errors.
+    /// Send a message to an actor. Returns [`SendError`] if the channel if full; does not block.
+    /// See [`SendResultExt`] trait for convenient handling of errors.
     pub fn send(&self, message: M) -> Result<(), SendError> {
         self.message_tx
             .try_send(message)
@@ -814,15 +845,27 @@ impl SendResultExt for Result<(), SendError> {
     }
 }
 
+/// Internal struct to encapsulate ability to send message with priority to an actor.
+struct MessageSender<M> {
+    high: Sender<M>,
+    normal: Sender<M>,
+    get_priority: fn(&M) -> Priority,
+}
+
 /// Internal trait to generalize over [`Sender`].
 trait SenderTrait<M>: Send + Sync {
     fn try_send(&self, message: M) -> Result<(), SendErrorReason>;
 }
 
-/// [`SenderTrait`] is implemented for concrete flume [`Sender`].
-impl<M: Send> SenderTrait<M> for Sender<M> {
+/// [`SenderTrait`] is implemented for our [`MessageSender`].
+impl<M: Send> SenderTrait<M> for MessageSender<M> {
     fn try_send(&self, message: M) -> Result<(), SendErrorReason> {
-        self.try_send(message).map_err(SendErrorReason::from)
+        let priority = (self.get_priority)(&message);
+        let sender = match priority {
+            Priority::Normal => &self.normal,
+            Priority::High => &self.high,
+        };
+        sender.try_send(message).map_err(SendErrorReason::from)
     }
 }
 
@@ -1020,6 +1063,66 @@ mod tests {
         assert_eq!(
             format!("{:?}", error),
             r#"SendError { recipient_name: "TestActor", reason: Disconnected }"#
+        );
+    }
+
+    #[test]
+    fn message_priorities() {
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace")).init();
+
+        struct PriorityActor {
+            received: Arc<Mutex<Vec<usize>>>,
+        }
+
+        impl Actor for PriorityActor {
+            type Context = Context<Self::Message>;
+            type Error = ();
+            type Message = usize;
+
+            fn handle(
+                &mut self,
+                context: &mut Self::Context,
+                message: Self::Message,
+            ) -> Result<(), Self::Error> {
+                let mut received = self.received.lock();
+                received.push(message);
+                if received.len() >= 20 {
+                    context.system_handle.shutdown().unwrap();
+                }
+                Ok(())
+            }
+
+            fn name() -> &'static str {
+                "PriorityActor"
+            }
+
+            fn priority(message: &Self::Message) -> Priority {
+                if *message >= 10 {
+                    Priority::High
+                } else {
+                    Priority::Normal
+                }
+            }
+        }
+
+        let addr = Addr::with_capacity(10);
+        let received = Arc::new(Mutex::new(Vec::<usize>::new()));
+
+        // Send messages before even actor starts.
+        for message in 0..20usize {
+            addr.send(message).unwrap();
+        }
+
+        let mut system = System::new("priorities");
+        system
+            .prepare(PriorityActor { received: Arc::clone(&received) })
+            .with_addr(addr)
+            .run_and_block()
+            .unwrap();
+
+        assert_eq!(
+            *received.lock(),
+            [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
         );
     }
 }
