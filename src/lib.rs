@@ -811,7 +811,7 @@ impl<M> Clone for Recipient<M> {
 }
 
 impl<M> Recipient<M> {
-    /// Send a message to an actor. Returns [`SendError`] if the channel if full; does not block.
+    /// Send a message to an actor. Returns [`SendError`] if the channel is full; does not block.
     /// See [`SendResultExt`] trait for convenient handling of errors.
     pub fn send(&self, message: M) -> Result<(), SendError> {
         self.message_tx
