@@ -229,6 +229,33 @@ impl<M> Context<M> {
     }
 }
 
+/// Capacity of actor's normal- and high-priority inboxes.
+/// For each inbox type, `None` signifies default capacity. Converts from [`usize`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Capacity {
+    normal: Option<usize>,
+    high: Option<usize>,
+}
+
+impl Capacity {
+    /// Set capacity of the normal priority channel, and use default for the high priority one.
+    pub fn of_normal_priority(capacity: usize) -> Self {
+        Self { normal: Some(capacity), ..Default::default() }
+    }
+
+    /// Set capacity of the high priority channel, and use default for the normal priority one.
+    pub fn of_high_priority(capacity: usize) -> Self {
+        Self { high: Some(capacity), ..Default::default() }
+    }
+}
+
+/// Set capacity of both normal and high priority channels to the same amount of messages.
+impl From<usize> for Capacity {
+    fn from(capacity: usize) -> Self {
+        Self { normal: Some(capacity), high: Some(capacity) }
+    }
+}
+
 /// A builder for specifying how to spawn an [`Actor`].
 /// You can specify your own [`Addr`] for the Actor,
 /// the capacity of the Actor's inbox, and you can specify
@@ -237,7 +264,7 @@ impl<M> Context<M> {
 #[must_use = "You must call .spawn() or .block_on() to run this actor"]
 pub struct SpawnBuilder<'a, A: Actor, F: FnOnce() -> A> {
     system: &'a mut System,
-    capacity: Option<usize>,
+    capacity: Capacity,
     addr: Option<Addr<A>>,
     factory: F,
 }
@@ -245,9 +272,9 @@ pub struct SpawnBuilder<'a, A: Actor, F: FnOnce() -> A> {
 impl<'a, A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
     SpawnBuilder<'a, A, F>
 {
-    /// Specify a capacity for the actor's receiving channel.
-    pub fn with_capacity(self, capacity: usize) -> Self {
-        Self { capacity: Some(capacity), ..self }
+    /// Specify a capacity for the actor's receiving channel. Accepts [`Capacity`] or [`usize`].
+    pub fn with_capacity(self, capacity: impl Into<Capacity>) -> Self {
+        Self { capacity: capacity.into(), ..self }
     }
 
     /// Specify an existing [`Addr`] to use with this Actor.
@@ -260,7 +287,7 @@ impl<'a, A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce
     /// has stopped.
     pub fn run_and_block(self) -> Result<(), ActorError> {
         let factory = self.factory;
-        let capacity = self.capacity.unwrap_or(DEFAULT_CHANNEL_CAPACITY);
+        let capacity = self.capacity;
         let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
 
         self.system.block_on(factory(), addr)
@@ -276,7 +303,7 @@ impl<
     /// Spawn this Actor into a new thread managed by the [`System`].
     pub fn spawn(self) -> Result<Addr<A>, ActorError> {
         let factory = self.factory;
-        let capacity = self.capacity.unwrap_or(DEFAULT_CHANNEL_CAPACITY);
+        let capacity = self.capacity;
         let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
 
         self.system.spawn_fn_with_addr(factory, addr.clone()).map(move |_| addr)
@@ -305,7 +332,12 @@ impl System {
     where
         A: Actor + 'static,
     {
-        SpawnBuilder { system: self, capacity: None, addr: None, factory: move || actor }
+        SpawnBuilder {
+            system: self,
+            capacity: Default::default(),
+            addr: None,
+            factory: move || actor,
+        }
     }
 
     /// Similar to `prepare`, but an actor factory is passed instead
@@ -318,7 +350,7 @@ impl System {
         A: Actor + 'static,
         F: FnOnce() -> A + Send + 'static,
     {
-        SpawnBuilder { system: self, capacity: None, addr: None, factory }
+        SpawnBuilder { system: self, capacity: Default::default(), addr: None, factory }
     }
 
     /// Spawn a normal [`Actor`] in the system, returning its address when successful.
@@ -751,9 +783,14 @@ where
 }
 
 impl<A: Actor> Addr<A> {
-    pub fn with_capacity(capacity: usize) -> Self {
-        let (priority_tx, priority_rx) = flume::bounded::<A::Message>(capacity);
-        let (message_tx, message_rx) = flume::bounded::<A::Message>(capacity);
+    /// Create address for an actor, specifying its inbox size. Accepts [`Capacity`] or [`usize`].
+    pub fn with_capacity(capacity: impl Into<Capacity>) -> Self {
+        let capacity: Capacity = capacity.into();
+        let prio_capacity = capacity.high.unwrap_or(DEFAULT_CHANNEL_CAPACITY);
+        let normal_capacity = capacity.normal.unwrap_or(DEFAULT_CHANNEL_CAPACITY);
+
+        let (priority_tx, priority_rx) = flume::bounded::<A::Message>(prio_capacity);
+        let (message_tx, message_rx) = flume::bounded::<A::Message>(normal_capacity);
         let (control_tx, control_rx) = flume::bounded(DEFAULT_CHANNEL_CAPACITY);
 
         let message_tx = Arc::new(MessageSender {
