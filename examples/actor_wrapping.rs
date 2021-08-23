@@ -2,7 +2,7 @@ use anyhow::Error;
 use env_logger::Env;
 use log::debug;
 use std::time::{Duration, Instant};
-use tonari_actor::{Actor, Context, System};
+use tonari_actor::{Actor, Context, Priority, System};
 
 /// An actor that wraps any other actor and adds some debug logging around its calls.
 struct LoggingAdapter<A> {
@@ -25,6 +25,10 @@ impl<A: Actor> Actor for LoggingAdapter<A> {
 
     fn name() -> &'static str {
         A::name()
+    }
+
+    fn priority(message: &Self::Message) -> Priority {
+        A::priority(message)
     }
 
     fn started(&mut self, context: &mut Self::Context) {
