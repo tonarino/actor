@@ -229,6 +229,33 @@ impl<M> Context<M> {
     }
 }
 
+/// Capacity of actor's normal- and high-priority inboxes.
+/// For each inbox type, `None` signifies default capacity. Converts from [`usize`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Capacity {
+    normal: Option<usize>,
+    high: Option<usize>,
+}
+
+impl Capacity {
+    /// Set capacity of the normal priority channel, and use default for the high priority one.
+    pub fn of_normal_priority(capacity: usize) -> Self {
+        Self { normal: Some(capacity), ..Default::default() }
+    }
+
+    /// Set capacity of the high priority channel, and use default for the normal priority one.
+    pub fn of_high_priority(capacity: usize) -> Self {
+        Self { high: Some(capacity), ..Default::default() }
+    }
+}
+
+/// Set capacity of both normal and high priority channels to the same amount of messages.
+impl From<usize> for Capacity {
+    fn from(capacity: usize) -> Self {
+        Self { normal: Some(capacity), high: Some(capacity) }
+    }
+}
+
 /// A builder for specifying how to spawn an [`Actor`].
 /// You can specify your own [`Addr`] for the Actor,
 /// the capacity of the Actor's inbox, and you can specify
@@ -237,7 +264,7 @@ impl<M> Context<M> {
 #[must_use = "You must call .spawn() or .block_on() to run this actor"]
 pub struct SpawnBuilder<'a, A: Actor, F: FnOnce() -> A> {
     system: &'a mut System,
-    capacity: Option<usize>,
+    capacity: Capacity,
     addr: Option<Addr<A>>,
     factory: F,
 }
@@ -245,9 +272,9 @@ pub struct SpawnBuilder<'a, A: Actor, F: FnOnce() -> A> {
 impl<'a, A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
     SpawnBuilder<'a, A, F>
 {
-    /// Specify a capacity for the actor's receiving channel.
-    pub fn with_capacity(self, capacity: usize) -> Self {
-        Self { capacity: Some(capacity), ..self }
+    /// Specify a capacity for the actor's receiving channel. Accepts [`Capacity`] or [`usize`].
+    pub fn with_capacity(self, capacity: impl Into<Capacity>) -> Self {
+        Self { capacity: capacity.into(), ..self }
     }
 
     /// Specify an existing [`Addr`] to use with this Actor.
@@ -260,7 +287,7 @@ impl<'a, A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce
     /// has stopped.
     pub fn run_and_block(self) -> Result<(), ActorError> {
         let factory = self.factory;
-        let capacity = self.capacity.unwrap_or(DEFAULT_CHANNEL_CAPACITY);
+        let capacity = self.capacity;
         let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
 
         self.system.block_on(factory(), addr)
@@ -276,7 +303,7 @@ impl<
     /// Spawn this Actor into a new thread managed by the [`System`].
     pub fn spawn(self) -> Result<Addr<A>, ActorError> {
         let factory = self.factory;
-        let capacity = self.capacity.unwrap_or(DEFAULT_CHANNEL_CAPACITY);
+        let capacity = self.capacity;
         let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
 
         self.system.spawn_fn_with_addr(factory, addr.clone()).map(move |_| addr)
@@ -305,7 +332,12 @@ impl System {
     where
         A: Actor + 'static,
     {
-        SpawnBuilder { system: self, capacity: None, addr: None, factory: move || actor }
+        SpawnBuilder {
+            system: self,
+            capacity: Default::default(),
+            addr: None,
+            factory: move || actor,
+        }
     }
 
     /// Similar to `prepare`, but an actor factory is passed instead
@@ -318,7 +350,7 @@ impl System {
         A: Actor + 'static,
         F: FnOnce() -> A + Send + 'static,
     {
-        SpawnBuilder { system: self, capacity: None, addr: None, factory }
+        SpawnBuilder { system: self, capacity: Default::default(), addr: None, factory }
     }
 
     /// Spawn a normal [`Actor`] in the system, returning its address when successful.
@@ -436,6 +468,12 @@ impl System {
                     Ok(control) => Received::Control(control),
                     Err(RecvError::Disconnected) => {
                         panic!("We keep control_tx alive through addr, should not happen.")
+                    },
+                })
+                .recv(&addr.priority_rx, |msg| match msg {
+                    Ok(msg) => Received::Message(msg),
+                    Err(RecvError::Disconnected) => {
+                        panic!("We keep message_tx alive through addr, should not happen.")
                     },
                 })
                 .recv(&addr.message_rx, |msg| match msg {
@@ -654,6 +692,12 @@ pub trait Actor {
     /// The name of the Actor - used only for logging/debugging.
     fn name() -> &'static str;
 
+    /// Determine priority of a `message` before it is sent to this actor.
+    /// Default implementation returns [`Priority::Normal`].
+    fn priority(_message: &Self::Message) -> Priority {
+        Priority::Normal
+    }
+
     /// An optional callback when the Actor has been started.
     fn started(&mut self, _context: &mut Self::Context) {}
 
@@ -705,6 +749,7 @@ pub trait Actor {
 
 pub struct Addr<A: Actor + ?Sized> {
     recipient: Recipient<A::Message>,
+    priority_rx: Receiver<A::Message>,
     message_rx: Receiver<A::Message>,
     control_rx: Receiver<Control>,
 }
@@ -719,6 +764,7 @@ impl<A: Actor> Clone for Addr<A> {
     fn clone(&self) -> Self {
         Self {
             recipient: self.recipient.clone(),
+            priority_rx: self.priority_rx.clone(),
             message_rx: self.message_rx.clone(),
             control_rx: self.control_rx.clone(),
         }
@@ -737,13 +783,28 @@ where
 }
 
 impl<A: Actor> Addr<A> {
-    pub fn with_capacity(capacity: usize) -> Self {
-        let (message_tx, message_rx) = flume::bounded::<A::Message>(capacity);
+    /// Create address for an actor, specifying its inbox size. Accepts [`Capacity`] or [`usize`].
+    pub fn with_capacity(capacity: impl Into<Capacity>) -> Self {
+        let capacity: Capacity = capacity.into();
+        let prio_capacity = capacity.high.unwrap_or(DEFAULT_CHANNEL_CAPACITY);
+        let normal_capacity = capacity.normal.unwrap_or(DEFAULT_CHANNEL_CAPACITY);
+
+        let (priority_tx, priority_rx) = flume::bounded::<A::Message>(prio_capacity);
+        let (message_tx, message_rx) = flume::bounded::<A::Message>(normal_capacity);
         let (control_tx, control_rx) = flume::bounded(DEFAULT_CHANNEL_CAPACITY);
 
-        let message_tx = Arc::new(message_tx);
+        let message_tx = Arc::new(MessageSender {
+            high: priority_tx,
+            normal: message_tx,
+            get_priority: A::priority,
+        });
         let name = A::name();
-        Self { recipient: Recipient { message_tx, control_tx, name }, message_rx, control_rx }
+        Self {
+            recipient: Recipient { message_tx, control_tx, name },
+            priority_rx,
+            message_rx,
+            control_rx,
+        }
     }
 
     /// "Genericize" an address to, rather than point to a specific actor,
@@ -757,6 +818,13 @@ impl<A: Actor> Addr<A> {
             name: A::name(),
         }
     }
+}
+
+/// Urgency of a given message. All high-priority messages are delivered before normal priority.
+#[derive(Clone, Copy, Debug)]
+pub enum Priority {
+    Normal,
+    High,
 }
 
 /// Similar to [`Addr`], but rather than pointing to a specific actor,
@@ -780,18 +848,12 @@ impl<M> Clone for Recipient<M> {
 }
 
 impl<M> Recipient<M> {
-    /// Non-blocking call to send a message. Use this if you need to react when
-    /// the channel is full. See [`SendResultExt`] trait for convenient handling of errors.
+    /// Send a message to an actor. Returns [`SendError`] if the channel is full; does not block.
+    /// See [`SendResultExt`] trait for convenient handling of errors.
     pub fn send(&self, message: M) -> Result<(), SendError> {
         self.message_tx
             .try_send(message)
             .map_err(|reason| SendError { recipient_name: self.name, reason })
-    }
-
-    /// The remaining capacity for the message channel.
-    pub fn remaining_capacity(&self) -> Option<usize> {
-        let message_tx = &self.message_tx as &dyn SenderTrait<M>;
-        message_tx.capacity().map(|capacity| capacity - message_tx.len())
     }
 }
 
@@ -820,27 +882,27 @@ impl SendResultExt for Result<(), SendError> {
     }
 }
 
+/// Internal struct to encapsulate ability to send message with priority to an actor.
+struct MessageSender<M> {
+    high: Sender<M>,
+    normal: Sender<M>,
+    get_priority: fn(&M) -> Priority,
+}
+
 /// Internal trait to generalize over [`Sender`].
 trait SenderTrait<M>: Send + Sync {
     fn try_send(&self, message: M) -> Result<(), SendErrorReason>;
-
-    fn len(&self) -> usize;
-
-    fn capacity(&self) -> Option<usize>;
 }
 
-/// [`SenderTrait`] is implemented for concrete flume [`Sender`].
-impl<M: Send> SenderTrait<M> for Sender<M> {
+/// [`SenderTrait`] is implemented for our [`MessageSender`].
+impl<M: Send> SenderTrait<M> for MessageSender<M> {
     fn try_send(&self, message: M) -> Result<(), SendErrorReason> {
-        self.try_send(message).map_err(SendErrorReason::from)
-    }
-
-    fn len(&self) -> usize {
-        self.len()
-    }
-
-    fn capacity(&self) -> Option<usize> {
-        self.capacity()
+        let priority = (self.get_priority)(&message);
+        let sender = match priority {
+            Priority::Normal => &self.normal,
+            Priority::High => &self.high,
+        };
+        sender.try_send(message).map_err(SendErrorReason::from)
     }
 }
 
@@ -848,14 +910,6 @@ impl<M: Send> SenderTrait<M> for Sender<M> {
 impl<M: Into<N>, N> SenderTrait<M> for Arc<dyn SenderTrait<N>> {
     fn try_send(&self, message: M) -> Result<(), SendErrorReason> {
         self.deref().try_send(message.into())
-    }
-
-    fn len(&self) -> usize {
-        self.deref().len()
-    }
-
-    fn capacity(&self) -> Option<usize> {
-        self.deref().capacity()
     }
 }
 
@@ -1046,6 +1100,66 @@ mod tests {
         assert_eq!(
             format!("{:?}", error),
             r#"SendError { recipient_name: "TestActor", reason: Disconnected }"#
+        );
+    }
+
+    #[test]
+    fn message_priorities() {
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace")).init();
+
+        struct PriorityActor {
+            received: Arc<Mutex<Vec<usize>>>,
+        }
+
+        impl Actor for PriorityActor {
+            type Context = Context<Self::Message>;
+            type Error = ();
+            type Message = usize;
+
+            fn handle(
+                &mut self,
+                context: &mut Self::Context,
+                message: Self::Message,
+            ) -> Result<(), Self::Error> {
+                let mut received = self.received.lock();
+                received.push(message);
+                if received.len() >= 20 {
+                    context.system_handle.shutdown().unwrap();
+                }
+                Ok(())
+            }
+
+            fn name() -> &'static str {
+                "PriorityActor"
+            }
+
+            fn priority(message: &Self::Message) -> Priority {
+                if *message >= 10 {
+                    Priority::High
+                } else {
+                    Priority::Normal
+                }
+            }
+        }
+
+        let addr = Addr::with_capacity(10);
+        let received = Arc::new(Mutex::new(Vec::<usize>::new()));
+
+        // Send messages before even actor starts.
+        for message in 0..20usize {
+            addr.send(message).unwrap();
+        }
+
+        let mut system = System::new("priorities");
+        system
+            .prepare(PriorityActor { received: Arc::clone(&received) })
+            .with_addr(addr)
+            .run_and_block()
+            .unwrap();
+
+        assert_eq!(
+            *received.lock(),
+            [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
         );
     }
 }

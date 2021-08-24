@@ -9,9 +9,14 @@
 //! [`RecipientExt`] becomes available for [`Recipient<TimedMessage<M>>`]s which provides methods like
 //! `send_delayed()`, `send_recurring()`.
 //!
+//! Once accepted by the actor, delayed and recurring messages do not occupy place in actor's
+//! channel inbox, they are placed to internal queue instead. Due to the design, delayed and
+//! recurring messages have always lower priority than instant messages when the actor is
+//! saturated.
+//!
 //! See `delay_actor.rs` example for usage.
 
-use crate::{Actor, Context, Recipient, SendError, SystemHandle};
+use crate::{Actor, Context, Priority, Recipient, SendError, SystemHandle};
 use std::{
     cmp::Ordering,
     collections::BinaryHeap,
@@ -136,6 +141,19 @@ impl<M: Send + 'static, A: Actor<Context = TimedContext<M>, Message = M>> Actor 
 
     fn name() -> &'static str {
         A::name()
+    }
+
+    fn priority(message: &Self::Message) -> Priority {
+        match message {
+            // Use underlying message priority if we can reference it.
+            TimedMessage::Instant { message } | TimedMessage::Delayed { message, .. } => {
+                A::priority(message)
+            },
+            // Recurring message is only received once, the recurring instances go through the
+            // internal queue (and not actor's channel). Assign high priority to the request to
+            // set-up the recurrent sending.
+            TimedMessage::Recurring { .. } => Priority::High,
+        }
     }
 
     fn started(&mut self, context: &mut Self::Context) {
