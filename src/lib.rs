@@ -793,14 +793,15 @@ impl<A: Actor> Addr<A> {
         let (message_tx, message_rx) = flume::bounded::<A::Message>(normal_capacity);
         let (control_tx, control_rx) = flume::bounded(DEFAULT_CHANNEL_CAPACITY);
 
+        let name = A::name();
         let message_tx = Arc::new(MessageSender {
             high: priority_tx,
             normal: message_tx,
             get_priority: A::priority,
+            name,
         });
-        let name = A::name();
         Self {
-            recipient: Recipient { message_tx, control_tx, name },
+            recipient: Recipient { message_tx, control_tx },
             priority_rx,
             message_rx,
             control_rx,
@@ -815,7 +816,6 @@ impl<A: Actor> Addr<A> {
             // Each level of boxing adds one .into() call, so box here to convert A::Message to M.
             message_tx: Arc::new(self.recipient.message_tx.clone()),
             control_tx: self.recipient.control_tx.clone(),
-            name: A::name(),
         }
     }
 }
@@ -832,18 +832,13 @@ pub enum Priority {
 pub struct Recipient<M> {
     message_tx: Arc<dyn SenderTrait<M>>,
     control_tx: Sender<Control>,
-    name: &'static str,
 }
 
 // #[derive(Clone)] adds Clone bound to M, which is not necessary.
 // https://github.com/rust-lang/rust/issues/26925
 impl<M> Clone for Recipient<M> {
     fn clone(&self) -> Self {
-        Self {
-            message_tx: self.message_tx.clone(),
-            control_tx: self.control_tx.clone(),
-            name: self.name,
-        }
+        Self { message_tx: self.message_tx.clone(), control_tx: self.control_tx.clone() }
     }
 }
 
@@ -851,9 +846,7 @@ impl<M> Recipient<M> {
     /// Send a message to an actor. Returns [`SendError`] if the channel is full; does not block.
     /// See [`SendResultExt`] trait for convenient handling of errors.
     pub fn send(&self, message: M) -> Result<(), SendError> {
-        self.message_tx
-            .try_send(message)
-            .map_err(|reason| SendError { recipient_name: self.name, reason })
+        self.message_tx.try_send(message)
     }
 }
 
@@ -887,28 +880,32 @@ struct MessageSender<M> {
     high: Sender<M>,
     normal: Sender<M>,
     get_priority: fn(&M) -> Priority,
+    /// Name of the actor we're sending to.
+    name: &'static str,
 }
 
 /// Internal trait to generalize over [`Sender`].
 trait SenderTrait<M>: Send + Sync {
-    fn try_send(&self, message: M) -> Result<(), SendErrorReason>;
+    fn try_send(&self, message: M) -> Result<(), SendError>;
 }
 
 /// [`SenderTrait`] is implemented for our [`MessageSender`].
 impl<M: Send> SenderTrait<M> for MessageSender<M> {
-    fn try_send(&self, message: M) -> Result<(), SendErrorReason> {
+    fn try_send(&self, message: M) -> Result<(), SendError> {
         let priority = (self.get_priority)(&message);
         let sender = match priority {
             Priority::Normal => &self.normal,
             Priority::High => &self.high,
         };
-        sender.try_send(message).map_err(SendErrorReason::from)
+        sender
+            .try_send(message)
+            .map_err(|e| SendError { reason: e.into(), recipient_name: self.name })
     }
 }
 
 /// [`SenderTrait`] is also implemented for boxed version of itself, including M -> N conversion.
 impl<M: Into<N>, N> SenderTrait<M> for Arc<dyn SenderTrait<N>> {
-    fn try_send(&self, message: M) -> Result<(), SendErrorReason> {
+    fn try_send(&self, message: M) -> Result<(), SendError> {
         self.deref().try_send(message.into())
     }
 }
