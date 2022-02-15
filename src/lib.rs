@@ -94,6 +94,8 @@ impl std::error::Error for ActorError {}
 pub struct SendError {
     /// The name of the intended recipient.
     pub recipient_name: &'static str,
+    /// The priority assigned to the message that could not be sent.
+    pub priority: Priority,
     /// The reason why sending has failed.
     pub reason: SendErrorReason,
 }
@@ -101,11 +103,16 @@ pub struct SendError {
 impl fmt::Display for SendError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let recipient_name = self.recipient_name;
+        let priority = self.priority;
         match self.reason {
             SendErrorReason::Full => {
-                write!(f, "The capacity of {}'s channel is full.", recipient_name)
+                write!(
+                    f,
+                    "The capacity of {}'s {:?}-priority channel is full.",
+                    recipient_name, priority
+                )
             },
-            SendErrorReason::Disconnected => DisconnectedError { recipient_name }.fmt(f),
+            SendErrorReason::Disconnected => DisconnectedError { recipient_name, priority }.fmt(f),
         }
     }
 }
@@ -117,6 +124,8 @@ impl std::error::Error for SendError {}
 pub struct DisconnectedError {
     /// The name of the intended recipient.
     pub recipient_name: &'static str,
+    /// The priority assigned to the message that could not be sent.
+    pub priority: Priority,
 }
 
 impl fmt::Display for DisconnectedError {
@@ -853,25 +862,30 @@ impl<M> Recipient<M> {
 pub trait SendResultExt {
     /// Don't return an `Err` when the recipient is at full capacity, run `func(receiver_name)`
     /// in such a case instead. `receiver_name` is the name of the intended recipient.
-    fn on_full<F: FnOnce(&'static str)>(self, func: F) -> Result<(), DisconnectedError>;
+    fn on_full<F: FnOnce(&'static str, Priority)>(self, func: F) -> Result<(), DisconnectedError>;
 
     /// Don't return an `Err` when the recipient is at full capacity.
     fn ignore_on_full(self) -> Result<(), DisconnectedError>;
 }
 
 impl SendResultExt for Result<(), SendError> {
-    fn on_full<F: FnOnce(&'static str)>(self, callback: F) -> Result<(), DisconnectedError> {
-        self.or_else(|e| match e.reason {
-            SendErrorReason::Full => {
-                callback(e.recipient_name);
+    fn on_full<F: FnOnce(&'static str, Priority)>(
+        self,
+        callback: F,
+    ) -> Result<(), DisconnectedError> {
+        self.or_else(|e| match e {
+            SendError { recipient_name, priority, reason: SendErrorReason::Full } => {
+                callback(recipient_name, priority);
                 Ok(())
             },
-            _ => Err(DisconnectedError { recipient_name: e.recipient_name }),
+            SendError { recipient_name, priority, reason: SendErrorReason::Disconnected } => {
+                Err(DisconnectedError { recipient_name, priority })
+            },
         })
     }
 
     fn ignore_on_full(self) -> Result<(), DisconnectedError> {
-        self.on_full(|_| ())
+        self.on_full(|_, _| ())
     }
 }
 
@@ -897,9 +911,11 @@ impl<M: Send> SenderTrait<M> for MessageSender<M> {
             Priority::Normal => &self.normal,
             Priority::High => &self.high,
         };
-        sender
-            .try_send(message)
-            .map_err(|e| SendError { reason: e.into(), recipient_name: self.name })
+        sender.try_send(message).map_err(|e| SendError {
+            reason: e.into(),
+            recipient_name: self.name,
+            priority,
+        })
     }
 }
 
@@ -1084,10 +1100,13 @@ mod tests {
         let stopped_actor = system.spawn(TestActor).unwrap().recipient();
 
         let error = full_actor.send(123).unwrap_err();
-        assert_eq!(error.to_string(), "The capacity of TestActor's channel is full.");
+        assert_eq!(
+            error.to_string(),
+            "The capacity of TestActor's Normal-priority channel is full."
+        );
         assert_eq!(
             format!("{:?}", error),
-            r#"SendError { recipient_name: "TestActor", reason: Full }"#
+            r#"SendError { recipient_name: "TestActor", priority: Normal, reason: Full }"#
         );
 
         system.shutdown().unwrap();
@@ -1096,7 +1115,7 @@ mod tests {
         assert_eq!(error.to_string(), "The recipient of the message (TestActor) no longer exists.");
         assert_eq!(
             format!("{:?}", error),
-            r#"SendError { recipient_name: "TestActor", reason: Disconnected }"#
+            r#"SendError { recipient_name: "TestActor", priority: Normal, reason: Disconnected }"#
         );
     }
 
