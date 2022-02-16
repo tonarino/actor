@@ -1095,11 +1095,12 @@ mod tests {
     #[test]
     fn errors() {
         let mut system = System::new("hi");
-        let full_actor = system.prepare(TestActor).with_capacity(0).spawn().unwrap();
+        let low_capacity_actor = system.prepare(TestActor).with_capacity(1).spawn().unwrap();
         // Convert to `Recipient` so that we don't keep the receiving side of `Addr` alive.
         let stopped_actor = system.spawn(TestActor).unwrap().recipient();
 
-        let error = full_actor.send(123).unwrap_err();
+        low_capacity_actor.send(9).expect("one message should fit");
+        let error = low_capacity_actor.send(123).unwrap_err();
         assert_eq!(
             error.to_string(),
             "The capacity of TestActor's Normal-priority channel is full."
