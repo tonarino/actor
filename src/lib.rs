@@ -1095,7 +1095,7 @@ mod tests {
     #[test]
     fn errors() {
         let mut system = System::new("hi");
-        let low_capacity_actor = system.prepare(TestActor).with_capacity(1).spawn().unwrap();
+        let low_capacity_actor: Addr<TestActor> = Addr::with_capacity(1);
         // Convert to `Recipient` so that we don't keep the receiving side of `Addr` alive.
         let stopped_actor = system.spawn(TestActor).unwrap().recipient();
 
