@@ -94,6 +94,8 @@ impl std::error::Error for ActorError {}
 pub struct SendError {
     /// The name of the intended recipient.
     pub recipient_name: &'static str,
+    /// The priority assigned to the message that could not be sent.
+    pub priority: Priority,
     /// The reason why sending has failed.
     pub reason: SendErrorReason,
 }
@@ -101,11 +103,16 @@ pub struct SendError {
 impl fmt::Display for SendError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let recipient_name = self.recipient_name;
+        let priority = self.priority;
         match self.reason {
             SendErrorReason::Full => {
-                write!(f, "The capacity of {}'s channel is full.", recipient_name)
+                write!(
+                    f,
+                    "The capacity of {}'s {:?}-priority channel is full.",
+                    recipient_name, priority
+                )
             },
-            SendErrorReason::Disconnected => DisconnectedError { recipient_name }.fmt(f),
+            SendErrorReason::Disconnected => DisconnectedError { recipient_name, priority }.fmt(f),
         }
     }
 }
@@ -117,6 +124,8 @@ impl std::error::Error for SendError {}
 pub struct DisconnectedError {
     /// The name of the intended recipient.
     pub recipient_name: &'static str,
+    /// The priority assigned to the message that could not be sent.
+    pub priority: Priority,
 }
 
 impl fmt::Display for DisconnectedError {
@@ -793,14 +802,15 @@ impl<A: Actor> Addr<A> {
         let (message_tx, message_rx) = flume::bounded::<A::Message>(normal_capacity);
         let (control_tx, control_rx) = flume::bounded(DEFAULT_CHANNEL_CAPACITY);
 
+        let name = A::name();
         let message_tx = Arc::new(MessageSender {
             high: priority_tx,
             normal: message_tx,
             get_priority: A::priority,
+            name,
         });
-        let name = A::name();
         Self {
-            recipient: Recipient { message_tx, control_tx, name },
+            recipient: Recipient { message_tx, control_tx },
             priority_rx,
             message_rx,
             control_rx,
@@ -815,7 +825,6 @@ impl<A: Actor> Addr<A> {
             // Each level of boxing adds one .into() call, so box here to convert A::Message to M.
             message_tx: Arc::new(self.recipient.message_tx.clone()),
             control_tx: self.recipient.control_tx.clone(),
-            name: A::name(),
         }
     }
 }
@@ -832,18 +841,13 @@ pub enum Priority {
 pub struct Recipient<M> {
     message_tx: Arc<dyn SenderTrait<M>>,
     control_tx: Sender<Control>,
-    name: &'static str,
 }
 
 // #[derive(Clone)] adds Clone bound to M, which is not necessary.
 // https://github.com/rust-lang/rust/issues/26925
 impl<M> Clone for Recipient<M> {
     fn clone(&self) -> Self {
-        Self {
-            message_tx: self.message_tx.clone(),
-            control_tx: self.control_tx.clone(),
-            name: self.name,
-        }
+        Self { message_tx: self.message_tx.clone(), control_tx: self.control_tx.clone() }
     }
 }
 
@@ -851,34 +855,37 @@ impl<M> Recipient<M> {
     /// Send a message to an actor. Returns [`SendError`] if the channel is full; does not block.
     /// See [`SendResultExt`] trait for convenient handling of errors.
     pub fn send(&self, message: M) -> Result<(), SendError> {
-        self.message_tx
-            .try_send(message)
-            .map_err(|reason| SendError { recipient_name: self.name, reason })
+        self.message_tx.try_send(message)
     }
 }
 
 pub trait SendResultExt {
     /// Don't return an `Err` when the recipient is at full capacity, run `func(receiver_name)`
     /// in such a case instead. `receiver_name` is the name of the intended recipient.
-    fn on_full<F: FnOnce(&'static str)>(self, func: F) -> Result<(), DisconnectedError>;
+    fn on_full<F: FnOnce(&'static str, Priority)>(self, func: F) -> Result<(), DisconnectedError>;
 
     /// Don't return an `Err` when the recipient is at full capacity.
     fn ignore_on_full(self) -> Result<(), DisconnectedError>;
 }
 
 impl SendResultExt for Result<(), SendError> {
-    fn on_full<F: FnOnce(&'static str)>(self, callback: F) -> Result<(), DisconnectedError> {
-        self.or_else(|e| match e.reason {
-            SendErrorReason::Full => {
-                callback(e.recipient_name);
+    fn on_full<F: FnOnce(&'static str, Priority)>(
+        self,
+        callback: F,
+    ) -> Result<(), DisconnectedError> {
+        self.or_else(|e| match e {
+            SendError { recipient_name, priority, reason: SendErrorReason::Full } => {
+                callback(recipient_name, priority);
                 Ok(())
             },
-            _ => Err(DisconnectedError { recipient_name: e.recipient_name }),
+            SendError { recipient_name, priority, reason: SendErrorReason::Disconnected } => {
+                Err(DisconnectedError { recipient_name, priority })
+            },
         })
     }
 
     fn ignore_on_full(self) -> Result<(), DisconnectedError> {
-        self.on_full(|_| ())
+        self.on_full(|_, _| ())
     }
 }
 
@@ -887,28 +894,34 @@ struct MessageSender<M> {
     high: Sender<M>,
     normal: Sender<M>,
     get_priority: fn(&M) -> Priority,
+    /// Name of the actor we're sending to.
+    name: &'static str,
 }
 
 /// Internal trait to generalize over [`Sender`].
 trait SenderTrait<M>: Send + Sync {
-    fn try_send(&self, message: M) -> Result<(), SendErrorReason>;
+    fn try_send(&self, message: M) -> Result<(), SendError>;
 }
 
 /// [`SenderTrait`] is implemented for our [`MessageSender`].
 impl<M: Send> SenderTrait<M> for MessageSender<M> {
-    fn try_send(&self, message: M) -> Result<(), SendErrorReason> {
+    fn try_send(&self, message: M) -> Result<(), SendError> {
         let priority = (self.get_priority)(&message);
         let sender = match priority {
             Priority::Normal => &self.normal,
             Priority::High => &self.high,
         };
-        sender.try_send(message).map_err(SendErrorReason::from)
+        sender.try_send(message).map_err(|e| SendError {
+            reason: e.into(),
+            recipient_name: self.name,
+            priority,
+        })
     }
 }
 
 /// [`SenderTrait`] is also implemented for boxed version of itself, including M -> N conversion.
 impl<M: Into<N>, N> SenderTrait<M> for Arc<dyn SenderTrait<N>> {
-    fn try_send(&self, message: M) -> Result<(), SendErrorReason> {
+    fn try_send(&self, message: M) -> Result<(), SendError> {
         self.deref().try_send(message.into())
     }
 }
@@ -1082,15 +1095,19 @@ mod tests {
     #[test]
     fn errors() {
         let mut system = System::new("hi");
-        let full_actor = system.prepare(TestActor).with_capacity(0).spawn().unwrap();
+        let low_capacity_actor = system.prepare(TestActor).with_capacity(1).spawn().unwrap();
         // Convert to `Recipient` so that we don't keep the receiving side of `Addr` alive.
         let stopped_actor = system.spawn(TestActor).unwrap().recipient();
 
-        let error = full_actor.send(123).unwrap_err();
-        assert_eq!(error.to_string(), "The capacity of TestActor's channel is full.");
+        low_capacity_actor.send(9).expect("one message should fit");
+        let error = low_capacity_actor.send(123).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "The capacity of TestActor's Normal-priority channel is full."
+        );
         assert_eq!(
             format!("{:?}", error),
-            r#"SendError { recipient_name: "TestActor", reason: Full }"#
+            r#"SendError { recipient_name: "TestActor", priority: Normal, reason: Full }"#
         );
 
         system.shutdown().unwrap();
@@ -1099,7 +1116,7 @@ mod tests {
         assert_eq!(error.to_string(), "The recipient of the message (TestActor) no longer exists.");
         assert_eq!(
             format!("{:?}", error),
-            r#"SendError { recipient_name: "TestActor", reason: Disconnected }"#
+            r#"SendError { recipient_name: "TestActor", priority: Normal, reason: Disconnected }"#
         );
     }
 
