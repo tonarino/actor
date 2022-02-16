@@ -242,8 +242,8 @@ impl<M> Context<M> {
 /// For each inbox type, `None` signifies default capacity. Converts from [`usize`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Capacity {
-    normal: Option<usize>,
-    high: Option<usize>,
+    pub normal: Option<usize>,
+    pub high: Option<usize>,
 }
 
 impl Capacity {
