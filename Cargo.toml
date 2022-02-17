@@ -14,13 +14,13 @@ keywords = ["actor", "threads"]
 # Make sure the eventual-fairness feature is disabled for priority queues.
 flume = { version = "0.10", default-features = false, features = ["select"] }
 log = "0.4"
-parking_lot = "0.11"
+parking_lot = "0.12"
 
 [dev-dependencies]
 anyhow = "1"
 ctrlc = "3.1"
 criterion = "0.3"
-env_logger = "0.8"
+env_logger = "0.9"
 num_cpus = "1"
 
 [[bench]]
