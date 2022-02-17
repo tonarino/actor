@@ -33,8 +33,10 @@ fn main() -> Result<(), Error> {
 
     let mut system = System::new("Example Timer System");
 
-    let consumer =
-        system.spawn(Timed::new(FinalConsumer { started_at: Instant::now() }))?.recipient();
+    let consumer = system
+        .prepare(Timed::new(FinalConsumer { started_at: Instant::now() }))
+        .with_capacity(6)
+        .spawn()?;
 
     let now = Instant::now();
     consumer.send_recurring(
@@ -46,6 +48,14 @@ fn main() -> Result<(), Error> {
     consumer.send_delayed("never received".to_string(), Duration::from_secs(4))?;
     consumer.send_timed("second".to_string(), now + Duration::from_secs(2))?;
     consumer.send_timed("first".to_string(), now + Duration::from_secs(1))?;
+
+    // `impl<M> From<M> for TimedMessage<M>` allows us to send original message type to the wrapped actor.
+    let string_recipient = consumer.recipient();
+    string_recipient.send("string".to_string())?;
+
+    // We can chain .recipient() calls to further convert message type that is accepted.
+    let str_reference_recipient = string_recipient.recipient();
+    str_reference_recipient.send("str reference")?;
 
     system.run()?;
 
