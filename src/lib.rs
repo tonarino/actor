@@ -242,8 +242,8 @@ impl<M> Context<M> {
 /// For each inbox type, `None` signifies default capacity. Converts from [`usize`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Capacity {
-    normal: Option<usize>,
-    high: Option<usize>,
+    pub normal: Option<usize>,
+    pub high: Option<usize>,
 }
 
 impl Capacity {
@@ -816,17 +816,6 @@ impl<A: Actor> Addr<A> {
             control_rx,
         }
     }
-
-    /// "Genericize" an address to, rather than point to a specific actor,
-    /// be applicable to any actor that handles a given message-response type.
-    /// Allows you to create recipient not only of `A::Message`, but of any `M: Into<A::Message>`.
-    pub fn recipient<M: Into<A::Message>>(&self) -> Recipient<M> {
-        Recipient {
-            // Each level of boxing adds one .into() call, so box here to convert A::Message to M.
-            message_tx: Arc::new(self.recipient.message_tx.clone()),
-            control_tx: self.recipient.control_tx.clone(),
-        }
-    }
 }
 
 /// Urgency of a given message. All high-priority messages are delivered before normal priority.
@@ -856,6 +845,21 @@ impl<M> Recipient<M> {
     /// See [`SendResultExt`] trait for convenient handling of errors.
     pub fn send(&self, message: M) -> Result<(), SendError> {
         self.message_tx.try_send(message)
+    }
+}
+
+impl<M: 'static> Recipient<M> {
+    /// Convert a [`Recipient<M>`] (or [`Addr<A>`] through [`Deref`], where `A::Message = M`) into
+    /// [`Recipient<N>`], where message `N` can be converted into `M`.
+    ///
+    /// In case of converting from [`Addr`], this erases the type of the actor and only preserves
+    /// type of the message, allowing you to make actors more independent of each other.
+    pub fn recipient<N: Into<M>>(&self) -> Recipient<N> {
+        Recipient {
+            // Each level of boxing adds one .into() call, so box here to convert A::Message to M.
+            message_tx: Arc::new(self.message_tx.clone()),
+            control_tx: self.control_tx.clone(),
+        }
     }
 }
 
@@ -1095,7 +1099,7 @@ mod tests {
     #[test]
     fn errors() {
         let mut system = System::new("hi");
-        let low_capacity_actor = system.prepare(TestActor).with_capacity(1).spawn().unwrap();
+        let low_capacity_actor: Addr<TestActor> = Addr::with_capacity(1);
         // Convert to `Recipient` so that we don't keep the receiving side of `Addr` alive.
         let stopped_actor = system.spawn(TestActor).unwrap().recipient();
 
