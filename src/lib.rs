@@ -75,8 +75,8 @@ pub mod timed;
 #[cfg(test)]
 pub mod testing;
 
-// Default capacity for channels unless overridden by `.with_capacity()`.
-static DEFAULT_CHANNEL_CAPACITY: usize = 5;
+/// Capacity of the control channel (used to deliver [Control] messages).
+const CONTROL_CHANNEL_CAPACITY: usize = 5;
 
 #[derive(Debug)]
 pub enum ActorError {
@@ -298,7 +298,7 @@ impl<M> Context<M> {
 }
 
 /// Capacity of actor's normal- and high-priority inboxes.
-/// For each inbox type, `None` signifies default capacity. Converts from [`usize`].
+/// For each inbox type, `None` signifies default capacity of given actor. Converts from [`usize`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Capacity {
     pub normal: Option<usize>,
@@ -341,6 +341,8 @@ impl<'a, A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce
     SpawnBuilder<'a, A, F>
 {
     /// Specify a capacity for the actor's receiving channel. Accepts [`Capacity`] or [`usize`].
+    ///
+    /// Ignored when `.with_addr()` is used at the same time.
     pub fn with_capacity(self, capacity: impl Into<Capacity>) -> Self {
         Self { capacity: capacity.into(), ..self }
     }
@@ -785,6 +787,11 @@ pub trait Actor {
     /// What kind of context this actor accepts. Usually [`Context<Self::Message>`].
     type Context;
 
+    /// Default capacity of actor's normal-priority inbox unless overridden by `.with_capacity()`.
+    const DEFAULT_CAPACITY_NORMAL: usize = 5;
+    /// Default capacity of actor's high-priority inbox unless overridden by `.with_capacity()`.
+    const DEFAULT_CAPACITY_HIGH: usize = 5;
+
     /// The primary function of this trait, allowing an actor to handle incoming messages of a certain type.
     fn handle(
         &mut self,
@@ -859,7 +866,7 @@ pub struct Addr<A: Actor + ?Sized> {
 
 impl<A: Actor> Default for Addr<A> {
     fn default() -> Self {
-        Self::with_capacity(DEFAULT_CHANNEL_CAPACITY)
+        Self::with_capacity(Capacity::default())
     }
 }
 
@@ -889,12 +896,12 @@ impl<A: Actor> Addr<A> {
     /// Create address for an actor, specifying its inbox size. Accepts [`Capacity`] or [`usize`].
     pub fn with_capacity(capacity: impl Into<Capacity>) -> Self {
         let capacity: Capacity = capacity.into();
-        let prio_capacity = capacity.high.unwrap_or(DEFAULT_CHANNEL_CAPACITY);
-        let normal_capacity = capacity.normal.unwrap_or(DEFAULT_CHANNEL_CAPACITY);
+        let prio_capacity = capacity.high.unwrap_or(A::DEFAULT_CAPACITY_HIGH);
+        let normal_capacity = capacity.normal.unwrap_or(A::DEFAULT_CAPACITY_NORMAL);
 
         let (priority_tx, priority_rx) = flume::bounded::<A::Message>(prio_capacity);
         let (message_tx, message_rx) = flume::bounded::<A::Message>(normal_capacity);
-        let (control_tx, control_rx) = flume::bounded(DEFAULT_CHANNEL_CAPACITY);
+        let (control_tx, control_rx) = flume::bounded(CONTROL_CHANNEL_CAPACITY);
 
         let name = A::name();
         let message_tx = Arc::new(MessageSender {

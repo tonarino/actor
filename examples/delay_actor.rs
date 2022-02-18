@@ -15,6 +15,8 @@ impl Actor for FinalConsumer {
     type Error = Error;
     type Message = String;
 
+    const DEFAULT_CAPACITY_NORMAL: usize = 6;
+
     fn name() -> &'static str {
         "FinalConsumer"
     }
@@ -33,10 +35,7 @@ fn main() -> Result<(), Error> {
 
     let mut system = System::new("Example Timer System");
 
-    let consumer = system
-        .prepare(Timed::new(FinalConsumer { started_at: Instant::now() }))
-        .with_capacity(6)
-        .spawn()?;
+    let consumer = system.spawn(Timed::new(FinalConsumer { started_at: Instant::now() }))?;
 
     let now = Instant::now();
     consumer.send_recurring(
