@@ -511,6 +511,9 @@ impl System {
                 },
                 Received::Message(msg) => {
                     trace!("[{}] message received by {}", system_handle.name, A::name());
+
+                    metrics::increment_counter!("actor_handle", "name" => A::name());
+
                     if let Err(err) = actor.handle(context, msg) {
                         error!(
                             "[{}] {} handle error: {:?}, shutting down.",
