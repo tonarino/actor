@@ -46,6 +46,8 @@ use flume::{select::SelectError, Receiver, RecvError, Selector, Sender};
 use log::*;
 use parking_lot::{Mutex, RwLock};
 use std::{
+    any::TypeId,
+    collections::HashMap,
     fmt,
     ops::Deref,
     sync::Arc,
@@ -165,6 +167,7 @@ pub struct System {
 }
 
 type SystemCallback = Box<dyn Fn() -> Result<(), ActorError> + Send + Sync>;
+type EventCallback = Box<dyn Fn(&dyn std::any::Any) + Send + Sync>;
 
 #[derive(Default)]
 pub struct SystemCallbacks {
@@ -193,6 +196,11 @@ impl Default for SystemState {
     }
 }
 
+#[derive(Default)]
+struct EventSubscribers {
+    events: HashMap<TypeId, Vec<EventCallback>>,
+}
+
 /// Contains the "metadata" of the system, including information about the registry
 /// of actors currently existing within the system.
 #[derive(Default, Clone)]
@@ -201,6 +209,8 @@ pub struct SystemHandle {
     registry: Arc<Mutex<Vec<RegistryEntry>>>,
     system_state: Arc<RwLock<SystemState>>,
     callbacks: Arc<SystemCallbacks>,
+
+    event_subscribers: Arc<Mutex<EventSubscribers>>,
 }
 
 /// An execution context for a specific actor. Specifically, this is useful for managing
@@ -291,6 +301,35 @@ impl<'a, A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce
         Self { addr: Some(addr), ..self }
     }
 
+    pub fn subscribe<E: 'static + Into<A::Message> + Clone>(mut self) -> Self {
+        {
+            let mut event_subscribers = self.system.handle.event_subscribers.lock();
+
+            // TODO(bschwind) - We need some other way to ensure an addr exists
+            //                  by the time we try to subscribe to events.
+            let capacity = self.capacity.normal.unwrap_or(DEFAULT_CHANNEL_CAPACITY);
+            let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
+
+            let event_addr = addr.clone();
+            self.addr = Some(addr);
+
+            // TODO(bschwind) - panic if the events HashMap doesn't contain this event type ID.
+
+            event_subscribers.events.entry(TypeId::of::<E>()).and_modify(|subs| {
+                subs.push(Box::new(move |e| {
+                    let stuff = &event_addr;
+
+                    if let Some(event) = e.downcast_ref::<E>() {
+                        let msg = event.clone();
+                        let _ = stuff.send(msg.into());
+                    }
+                }));
+            });
+        }
+
+        self
+    }
+
     /// Run this Actor on the current calling thread. This is a
     /// blocking call. This function will exit when the Actor
     /// has stopped.
@@ -323,6 +362,15 @@ impl System {
     /// Creates a new System with a given name.
     pub fn new(name: &str) -> Self {
         System::with_callbacks(name, Default::default())
+    }
+
+    pub fn with_event<T: 'static>(self) -> Self {
+        {
+            let mut event_subscribers = self.handle.event_subscribers.lock();
+            event_subscribers.events.insert(TypeId::of::<T>(), vec![]);
+        }
+
+        self
     }
 
     pub fn with_callbacks(name: &str, callbacks: SystemCallbacks) -> Self {
@@ -642,6 +690,15 @@ impl SystemHandle {
             Err(ActorError::ActorPanic)
         } else {
             Ok(())
+        }
+    }
+
+    pub fn publish<E: 'static + std::any::Any>(&self, event: E) {
+        let event_subscribers = self.event_subscribers.lock();
+        if let Some(subs) = event_subscribers.events.get(&TypeId::of::<E>()) {
+            for sub in subs {
+                sub(&event);
+            }
         }
     }
 
