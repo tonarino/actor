@@ -37,6 +37,7 @@ impl Actor for PublisherActor {
 
     fn started(&mut self, context: &mut Self::Context) {
         context.set_deadline(Some(self.started_at + Duration::from_millis(1500)));
+        context.subscribe::<String>();
     }
 
     fn handle(
@@ -99,6 +100,10 @@ impl Actor for SubscriberActor1 {
         "SubscriberActor1"
     }
 
+    fn started(&mut self, context: &mut Self::Context) {
+        context.subscribe::<String>();
+    }
+
     fn handle(
         &mut self,
         _context: &mut Self::Context,
@@ -123,6 +128,10 @@ impl Actor for SubscriberActor2 {
         "SubscriberActor1"
     }
 
+    fn started(&mut self, context: &mut Self::Context) {
+        context.subscribe::<String>();
+    }
+
     fn handle(
         &mut self,
         _context: &mut Self::Context,
@@ -144,9 +153,9 @@ fn main() -> Result<(), Error> {
     let mut system = System::new("Example PubSub System").with_event::<String>();
 
     let publisher_actor = PublisherActor::new();
-    let _ = system.prepare(publisher_actor).subscribe::<String>().spawn()?;
-    let _ = system.prepare(SubscriberActor1).subscribe::<String>().spawn()?;
-    let _ = system.prepare(SubscriberActor2).subscribe::<String>().spawn()?;
+    let _ = system.prepare(publisher_actor).spawn()?;
+    let _ = system.prepare(SubscriberActor1).spawn()?;
+    let _ = system.prepare(SubscriberActor2).spawn()?;
 
     system.publish("Hello from the main thread!".to_string());
 

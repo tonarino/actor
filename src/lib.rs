@@ -246,6 +246,24 @@ impl<M> Context<M> {
     pub fn set_timeout(&mut self, timeout: Option<Duration>) {
         self.set_deadline(timeout.map(|t| Instant::now() + t));
     }
+
+    pub fn subscribe<E: 'static + Into<M> + Clone>(&mut self)
+    where
+        M: 'static,
+    {
+        let mut event_subscribers = self.system_handle.event_subscribers.lock();
+        let event_addr = self.myself.clone();
+
+        // TODO(bschwind) - panic if the events HashMap doesn't contain this event type ID.
+        event_subscribers.events.entry(TypeId::of::<E>()).and_modify(|subs| {
+            subs.push(Box::new(move |e| {
+                if let Some(event) = e.downcast_ref::<E>() {
+                    let msg = event.clone();
+                    let _ = event_addr.send(msg.into());
+                }
+            }));
+        });
+    }
 }
 
 /// Capacity of actor's normal- and high-priority inboxes.
@@ -299,35 +317,6 @@ impl<'a, A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce
     /// Specify an existing [`Addr`] to use with this Actor.
     pub fn with_addr(self, addr: Addr<A>) -> Self {
         Self { addr: Some(addr), ..self }
-    }
-
-    pub fn subscribe<E: 'static + Into<A::Message> + Clone>(mut self) -> Self {
-        {
-            let mut event_subscribers = self.system.handle.event_subscribers.lock();
-
-            // TODO(bschwind) - We need some other way to ensure an addr exists
-            //                  by the time we try to subscribe to events.
-            let capacity = self.capacity.normal.unwrap_or(DEFAULT_CHANNEL_CAPACITY);
-            let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
-
-            let event_addr = addr.clone();
-            self.addr = Some(addr);
-
-            // TODO(bschwind) - panic if the events HashMap doesn't contain this event type ID.
-
-            event_subscribers.events.entry(TypeId::of::<E>()).and_modify(|subs| {
-                subs.push(Box::new(move |e| {
-                    let stuff = &event_addr;
-
-                    if let Some(event) = e.downcast_ref::<E>() {
-                        let msg = event.clone();
-                        let _ = stuff.send(msg.into());
-                    }
-                }));
-            });
-        }
-
-        self
     }
 
     /// Run this Actor on the current calling thread. This is a
