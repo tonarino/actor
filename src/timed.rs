@@ -18,6 +18,7 @@
 
 use crate::{Actor, Context, Priority, Recipient, SendError, SystemHandle};
 use std::{
+    any::TypeId,
     cmp::Ordering,
     collections::BinaryHeap,
     ops::Deref,
@@ -91,6 +92,25 @@ impl<M> TimedContext<M> {
             system_handle: context.system_handle.clone(),
             myself: context.myself.clone(),
         }
+    }
+
+    // TODO(bschwind) - This should probably be de-duplicated with `Context::subscribe()`
+    pub fn subscribe<E: 'static + Into<M> + Clone>(&mut self)
+    where
+        M: 'static,
+    {
+        let mut event_subscribers = self.system_handle.event_subscribers.lock();
+        let event_addr = self.myself.clone();
+
+        // TODO(bschwind) - panic if the events HashMap doesn't contain this event type ID.
+        event_subscribers.events.entry(TypeId::of::<E>()).and_modify(|subs| {
+            subs.push(Box::new(move |e| {
+                if let Some(event) = e.downcast_ref::<E>() {
+                    let msg = event.clone();
+                    let _ = event_addr.send(TimedMessage::Instant { message: msg.into() });
+                }
+            }));
+        });
     }
 }
 
