@@ -1,7 +1,7 @@
 use anyhow::Error;
 use env_logger::Env;
 use std::time::{Duration, Instant};
-use tonari_actor::{Actor, Context, System};
+use tonari_actor::{Actor, Context, Event, System};
 
 #[derive(Debug)]
 enum PublisherMessage {
@@ -9,9 +9,14 @@ enum PublisherMessage {
     Text(String),
 }
 
-impl From<String> for PublisherMessage {
-    fn from(text: String) -> Self {
-        PublisherMessage::Text(text)
+#[derive(Debug, Clone)]
+struct StringEvent(String);
+
+impl Event for StringEvent {}
+
+impl From<StringEvent> for PublisherMessage {
+    fn from(text: StringEvent) -> Self {
+        PublisherMessage::Text(text.0)
     }
 }
 
@@ -37,7 +42,7 @@ impl Actor for PublisherActor {
 
     fn started(&mut self, context: &mut Self::Context) {
         context.set_deadline(Some(self.started_at + Duration::from_millis(1500)));
-        context.subscribe::<String>();
+        context.subscribe::<StringEvent>();
     }
 
     fn handle(
@@ -56,14 +61,13 @@ impl Actor for PublisherActor {
                 let text = format!("Hello from PublisherActor - counter = {}", self.counter);
                 self.counter += 1;
 
-                context.system_handle.publish(text);
+                context.system_handle.publish(StringEvent(text));
             },
             PublisherMessage::Text(text) => {
                 println!("PublisherActor got a text message: {:?}", text);
             },
         }
 
-        context.system_handle.publish(());
         Ok(())
     }
 
@@ -82,9 +86,9 @@ enum SubscriberMessage {
     Text(String),
 }
 
-impl From<String> for SubscriberMessage {
-    fn from(text: String) -> Self {
-        SubscriberMessage::Text(text)
+impl From<StringEvent> for SubscriberMessage {
+    fn from(text: StringEvent) -> Self {
+        SubscriberMessage::Text(text.0)
     }
 }
 
@@ -101,7 +105,7 @@ impl Actor for SubscriberActor1 {
     }
 
     fn started(&mut self, context: &mut Self::Context) {
-        context.subscribe::<String>();
+        context.subscribe::<StringEvent>();
     }
 
     fn handle(
@@ -129,7 +133,7 @@ impl Actor for SubscriberActor2 {
     }
 
     fn started(&mut self, context: &mut Self::Context) {
-        context.subscribe::<String>();
+        context.subscribe::<StringEvent>();
     }
 
     fn handle(
@@ -157,7 +161,7 @@ fn main() -> Result<(), Error> {
     let _ = system.prepare(SubscriberActor1).spawn()?;
     let _ = system.prepare(SubscriberActor2).spawn()?;
 
-    system.publish("Hello from the main thread!".to_string());
+    system.publish(StringEvent("Hello from the main thread!".to_string()));
 
     system.run()?;
 

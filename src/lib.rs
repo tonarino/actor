@@ -196,6 +196,10 @@ impl Default for SystemState {
     }
 }
 
+/// A marker trait for types which participate in the publish-subscribe system
+/// of the actor framework.
+pub trait Event: Clone + std::any::Any + 'static {}
+
 #[derive(Default)]
 struct EventSubscribers {
     events: HashMap<TypeId, Vec<EventCallback>>,
@@ -247,7 +251,7 @@ impl<M> Context<M> {
         self.set_deadline(timeout.map(|t| Instant::now() + t));
     }
 
-    pub fn subscribe<E: 'static + Into<M> + Clone>(&mut self)
+    pub fn subscribe<E: Event + Into<M>>(&mut self)
     where
         M: 'static,
     {
@@ -672,7 +676,7 @@ impl SystemHandle {
         }
     }
 
-    pub fn publish<E: 'static + std::any::Any>(&self, event: E) {
+    pub fn publish<E: Event>(&self, event: E) {
         let event_subscribers = self.event_subscribers.lock();
         if let Some(subs) = event_subscribers.events.get(&TypeId::of::<E>()) {
             for sub in subs {
