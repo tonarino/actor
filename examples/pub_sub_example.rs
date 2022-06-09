@@ -150,7 +150,7 @@ impl Actor for SubscriberActor2 {
 fn main() -> Result<(), Error> {
     env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
 
-    let mut system = System::new("Example PubSub System").with_event::<String>();
+    let mut system = System::new("Example PubSub System");
 
     let publisher_actor = PublisherActor::new();
     let _ = system.prepare(publisher_actor).spawn()?;

@@ -254,15 +254,14 @@ impl<M> Context<M> {
         let mut event_subscribers = self.system_handle.event_subscribers.lock();
         let event_addr = self.myself.clone();
 
-        // TODO(bschwind) - panic if the events HashMap doesn't contain this event type ID.
-        event_subscribers.events.entry(TypeId::of::<E>()).and_modify(|subs| {
-            subs.push(Box::new(move |e| {
-                if let Some(event) = e.downcast_ref::<E>() {
-                    let msg = event.clone();
-                    let _ = event_addr.send(msg.into());
-                }
-            }));
-        });
+        let subs = event_subscribers.events.entry(TypeId::of::<E>()).or_default();
+
+        subs.push(Box::new(move |e| {
+            if let Some(event) = e.downcast_ref::<E>() {
+                let msg = event.clone();
+                let _ = event_addr.send(msg.into());
+            }
+        }));
     }
 }
 
@@ -351,15 +350,6 @@ impl System {
     /// Creates a new System with a given name.
     pub fn new(name: &str) -> Self {
         System::with_callbacks(name, Default::default())
-    }
-
-    pub fn with_event<T: 'static>(self) -> Self {
-        {
-            let mut event_subscribers = self.handle.event_subscribers.lock();
-            event_subscribers.events.insert(TypeId::of::<T>(), vec![]);
-        }
-
-        self
     }
 
     pub fn with_callbacks(name: &str, callbacks: SystemCallbacks) -> Self {
