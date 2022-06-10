@@ -45,7 +45,7 @@ impl Actor for PublisherActor {
             PublisherMessage::PublishEvents => {
                 let start = Instant::now();
                 for _i in 0..self.iterations {
-                    context.system_handle.publish(StringEvent("hello".to_string()));
+                    context.system_handle.publish(StringEvent("hello".to_string()))?;
                 }
                 let elapsed = start.elapsed();
 

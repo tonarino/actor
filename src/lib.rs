@@ -167,7 +167,7 @@ pub struct System {
 }
 
 type SystemCallback = Box<dyn Fn() -> Result<(), ActorError> + Send + Sync>;
-type EventCallback = Box<dyn Fn(&dyn std::any::Any) + Send + Sync>;
+type EventCallback = Box<dyn Fn(&dyn std::any::Any) -> Result<(), SendError> + Send + Sync>;
 
 #[derive(Default)]
 pub struct SystemCallbacks {
@@ -674,18 +674,23 @@ impl SystemHandle {
         subs.push(Box::new(move |e| {
             if let Some(event) = e.downcast_ref::<E>() {
                 let msg = event.clone();
-                let _ = recipient.send(msg.into());
+                recipient.send(msg.into())?;
             }
+
+            Ok(())
         }));
     }
 
-    pub fn publish<E: Event>(&self, event: E) {
+    /// Publish an event. When sending to some subscriber fails, returns error immediately.
+    pub fn publish<E: Event>(&self, event: E) -> Result<(), SendError> {
         let event_subscribers = self.event_subscribers.lock();
         if let Some(subs) = event_subscribers.events.get(&TypeId::of::<E>()) {
             for sub in subs {
-                sub(&event);
+                sub(&event)?;
             }
         }
+
+        Ok(())
     }
 
     pub fn is_running(&self) -> bool {

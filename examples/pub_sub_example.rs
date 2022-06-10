@@ -61,7 +61,7 @@ impl Actor for PublisherActor {
                 let text = format!("Hello from PublisherActor - counter = {}", self.counter);
                 self.counter += 1;
 
-                context.system_handle.publish(StringEvent(text));
+                context.system_handle.publish(StringEvent(text))?;
             },
             PublisherMessage::Text(text) => {
                 println!("PublisherActor got a text message: {:?}", text);
@@ -161,7 +161,7 @@ fn main() -> Result<(), Error> {
     let _ = system.prepare(SubscriberActor1).spawn()?;
     let _ = system.prepare(SubscriberActor2).spawn()?;
 
-    system.publish(StringEvent("Hello from the main thread!".to_string()));
+    system.publish(StringEvent("Hello from the main thread!".to_string()))?;
 
     system.run()?;
 
