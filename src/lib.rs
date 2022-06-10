@@ -251,7 +251,7 @@ impl<M> Context<M> {
         self.set_deadline(timeout.map(|t| Instant::now() + t));
     }
 
-    pub fn subscribe<E: Event + Into<M>>(&mut self)
+    pub fn subscribe<E: Event + Into<M>>(&self)
     where
         M: 'static,
     {

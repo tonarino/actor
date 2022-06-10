@@ -94,7 +94,7 @@ impl<M> TimedContext<M> {
     }
 
     /// Subscribes to an event type. Events will be delivered as instant messages.
-    pub fn subscribe<E: Event + Into<M>>(&mut self)
+    pub fn subscribe<E: Event + Into<M>>(&self)
     where
         M: 'static,
     {
