@@ -255,17 +255,7 @@ impl<M> Context<M> {
     where
         M: 'static,
     {
-        let mut event_subscribers = self.system_handle.event_subscribers.lock();
-        let event_addr = self.myself.clone();
-
-        let subs = event_subscribers.events.entry(TypeId::of::<E>()).or_default();
-
-        subs.push(Box::new(move |e| {
-            if let Some(event) = e.downcast_ref::<E>() {
-                let msg = event.clone();
-                let _ = event_addr.send(msg.into());
-            }
-        }));
+        self.system_handle.subscribe_recipient::<M, E>(self.myself.clone());
     }
 }
 
@@ -674,6 +664,19 @@ impl SystemHandle {
         } else {
             Ok(())
         }
+    }
+
+    pub fn subscribe_recipient<M: 'static, E: Event + Into<M>>(&self, recipient: Recipient<M>) {
+        let mut event_subscribers = self.event_subscribers.lock();
+
+        let subs = event_subscribers.events.entry(TypeId::of::<E>()).or_default();
+
+        subs.push(Box::new(move |e| {
+            if let Some(event) = e.downcast_ref::<E>() {
+                let msg = event.clone();
+                let _ = recipient.send(msg.into());
+            }
+        }));
     }
 
     pub fn publish<E: Event>(&self, event: E) {

@@ -16,9 +16,8 @@
 //!
 //! See `delay_actor.rs` example for usage.
 
-use crate::{Actor, Context, Priority, Recipient, SendError, SystemHandle};
+use crate::{Actor, Context, Event, Priority, Recipient, SendError, SystemHandle};
 use std::{
-    any::TypeId,
     cmp::Ordering,
     collections::BinaryHeap,
     ops::Deref,
@@ -94,23 +93,13 @@ impl<M> TimedContext<M> {
         }
     }
 
-    // TODO(bschwind) - This should probably be de-duplicated with `Context::subscribe()`
-    pub fn subscribe<E: 'static + Into<M> + Clone>(&mut self)
+    /// Subscribes to an event type. Events will be delivered as instant messages.
+    pub fn subscribe<E: Event + Into<M>>(&mut self)
     where
         M: 'static,
     {
-        let mut event_subscribers = self.system_handle.event_subscribers.lock();
-        let event_addr = self.myself.clone();
-
-        // TODO(bschwind) - panic if the events HashMap doesn't contain this event type ID.
-        event_subscribers.events.entry(TypeId::of::<E>()).and_modify(|subs| {
-            subs.push(Box::new(move |e| {
-                if let Some(event) = e.downcast_ref::<E>() {
-                    let msg = event.clone();
-                    let _ = event_addr.send(TimedMessage::Instant { message: msg.into() });
-                }
-            }));
-        });
+        // The recipient() call allows conversion from M to TimedMessage<M>.
+        self.system_handle.subscribe_recipient::<M, E>(self.myself.recipient());
     }
 }
 
