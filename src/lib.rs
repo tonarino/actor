@@ -268,6 +268,9 @@ impl<M> Context<M> {
 
     /// Subscribe current actor to event of type `E`. This is part of the event system. You don't
     /// need to call this method to receive direct messages sent using [`Addr`] and [`Recipient`].
+    ///
+    /// Note that subscribing twice to the same event would result in duplicate events -- no
+    /// de-duplication of subscriptions is performed.
     pub fn subscribe<E: Event + Into<M>>(&self)
     where
         M: 'static,
