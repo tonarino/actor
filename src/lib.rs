@@ -136,6 +136,24 @@ impl fmt::Display for SendError {
 
 impl std::error::Error for SendError {}
 
+/// Error publishing an event.
+#[derive(Debug)]
+pub struct PublishError(pub Vec<SendError>);
+
+impl fmt::Display for PublishError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let error_strings: Vec<String> = self.0.iter().map(ToString::to_string).collect();
+        write!(
+            f,
+            "Failed to deliver an event to {} subscribers: {}.",
+            self.0.len(),
+            error_strings.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for PublishError {}
+
 /// The actor message channel is disconnected.
 #[derive(Debug, Clone, Copy)]
 pub struct DisconnectedError {
@@ -704,13 +722,17 @@ impl SystemHandle {
 
     /// Publish an event. All actors that have previously subscribed to the type will receive it.
     ///
-    /// When sending to some subscriber fails, this method returns an error immediately.
+    /// When sending to some subscriber fails, others are still tried and vec of errors is returned.
     /// For direct, non-[`Clone`] or high-throughput messages please use [`Addr`] or [`Recipient`].
-    pub fn publish<E: Event>(&self, event: E) -> Result<(), SendError> {
+    pub fn publish<E: Event>(&self, event: E) -> Result<(), PublishError> {
         let event_subscribers = self.event_subscribers.read();
         if let Some(subs) = event_subscribers.events.get(&TypeId::of::<E>()) {
-            for sub in subs {
-                sub(&event)?;
+            let errors: Vec<SendError> = subs
+                .iter()
+                .filter_map(|subscriber_callback| subscriber_callback(&event).err())
+                .collect();
+            if !errors.is_empty() {
+                return Err(PublishError(errors));
             }
         }
 
