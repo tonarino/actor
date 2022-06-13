@@ -214,7 +214,7 @@ pub struct SystemHandle {
     system_state: Arc<RwLock<SystemState>>,
     callbacks: Arc<SystemCallbacks>,
 
-    event_subscribers: Arc<Mutex<EventSubscribers>>,
+    event_subscribers: Arc<RwLock<EventSubscribers>>,
 }
 
 /// An execution context for a specific actor. Specifically, this is useful for managing
@@ -667,7 +667,7 @@ impl SystemHandle {
     }
 
     pub fn subscribe_recipient<M: 'static, E: Event + Into<M>>(&self, recipient: Recipient<M>) {
-        let mut event_subscribers = self.event_subscribers.lock();
+        let mut event_subscribers = self.event_subscribers.write();
 
         let subs = event_subscribers.events.entry(TypeId::of::<E>()).or_default();
 
@@ -683,7 +683,7 @@ impl SystemHandle {
 
     /// Publish an event. When sending to some subscriber fails, returns error immediately.
     pub fn publish<E: Event>(&self, event: E) -> Result<(), SendError> {
-        let event_subscribers = self.event_subscribers.lock();
+        let event_subscribers = self.event_subscribers.read();
         if let Some(subs) = event_subscribers.events.get(&TypeId::of::<E>()) {
             for sub in subs {
                 sub(&event)?;
