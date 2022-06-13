@@ -41,6 +41,21 @@
 //! system.shutdown().unwrap();
 //! ```
 //!
+//! `tonari-actor` also provides some extensions on top of the basic actor functionality:
+//!
+//! # Timing Message Delivery
+//!
+//! On top of [`Context::set_deadline()`] and [`Actor::deadline_passed()`] building blocks there
+//! is a higher level abstraction for delayed and recurring messages in the [`timed`] module.
+//!
+//! # Publisher/subscriber Event System
+//!
+//! For cases where you want a global propagation of "events",
+//! you can implement the [`Event`] trait for your event type and then use [`Context::subscribe()`]
+//! and [`SystemHandle::publish()`] methods.
+//!
+//! Keep in mind that the event system has an additional requirement that the event type needs to be
+//! [`Clone`] and is not intended to be high-throughput. Run the `pub_sub` benchmark to get an idea.
 
 use flume::{select::SelectError, Receiver, RecvError, Selector, Sender};
 use log::*;
@@ -251,6 +266,8 @@ impl<M> Context<M> {
         self.set_deadline(timeout.map(|t| Instant::now() + t));
     }
 
+    /// Subscribe current actor to event of type `E`. This is part of the event system. You don't
+    /// need to call this method to receive direct messages sent using [`Addr`] and [`Recipient`].
     pub fn subscribe<E: Event + Into<M>>(&self)
     where
         M: 'static,
@@ -666,6 +683,7 @@ impl SystemHandle {
         }
     }
 
+    /// Subscribe given `recipient` to events of type `E`. See [`Context::subscribe()`].
     pub fn subscribe_recipient<M: 'static, E: Event + Into<M>>(&self, recipient: Recipient<M>) {
         let mut event_subscribers = self.event_subscribers.write();
 
@@ -681,7 +699,10 @@ impl SystemHandle {
         }));
     }
 
-    /// Publish an event. When sending to some subscriber fails, returns error immediately.
+    /// Publish an event. All actors that have previously subscribed to the type will receive it.
+    ///
+    /// When sending to some subscriber fails, this method returns an error immediately.
+    /// For direct, non-[`Clone`] or high-throughput messages please use [`Addr`] or [`Recipient`].
     pub fn publish<E: Event>(&self, event: E) -> Result<(), SendError> {
         let event_subscribers = self.event_subscribers.read();
         if let Some(subs) = event_subscribers.events.get(&TypeId::of::<E>()) {
