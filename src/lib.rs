@@ -41,11 +41,28 @@
 //! system.shutdown().unwrap();
 //! ```
 //!
+//! `tonari-actor` also provides some extensions on top of the basic actor functionality:
+//!
+//! # Timing Message Delivery
+//!
+//! On top of [`Context::set_deadline()`] and [`Actor::deadline_passed()`] building blocks there
+//! is a higher level abstraction for delayed and recurring messages in the [`timed`] module.
+//!
+//! # Publisher/subscriber Event System
+//!
+//! For cases where you want a global propagation of "events",
+//! you can implement the [`Event`] trait for your event type and then use [`Context::subscribe()`]
+//! and [`SystemHandle::publish()`] methods.
+//!
+//! Keep in mind that the event system has an additional requirement that the event type needs to be
+//! [`Clone`] and is not intended to be high-throughput. Run the `pub_sub` benchmark to get an idea.
 
 use flume::{select::SelectError, Receiver, RecvError, Selector, Sender};
 use log::*;
 use parking_lot::{Mutex, RwLock};
 use std::{
+    any::TypeId,
+    collections::HashMap,
     fmt,
     ops::Deref,
     sync::Arc,
@@ -119,6 +136,24 @@ impl fmt::Display for SendError {
 
 impl std::error::Error for SendError {}
 
+/// Error publishing an event.
+#[derive(Debug)]
+pub struct PublishError(pub Vec<SendError>);
+
+impl fmt::Display for PublishError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let error_strings: Vec<String> = self.0.iter().map(ToString::to_string).collect();
+        write!(
+            f,
+            "Failed to deliver an event to {} subscribers: {}.",
+            self.0.len(),
+            error_strings.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for PublishError {}
+
 /// The actor message channel is disconnected.
 #[derive(Debug, Clone, Copy)]
 pub struct DisconnectedError {
@@ -165,6 +200,7 @@ pub struct System {
 }
 
 type SystemCallback = Box<dyn Fn() -> Result<(), ActorError> + Send + Sync>;
+type EventCallback = Box<dyn Fn(&dyn std::any::Any) -> Result<(), SendError> + Send + Sync>;
 
 #[derive(Default)]
 pub struct SystemCallbacks {
@@ -193,6 +229,15 @@ impl Default for SystemState {
     }
 }
 
+/// A marker trait for types which participate in the publish-subscribe system
+/// of the actor framework.
+pub trait Event: Clone + std::any::Any + 'static {}
+
+#[derive(Default)]
+struct EventSubscribers {
+    events: HashMap<TypeId, Vec<EventCallback>>,
+}
+
 /// Contains the "metadata" of the system, including information about the registry
 /// of actors currently existing within the system.
 #[derive(Default, Clone)]
@@ -201,6 +246,8 @@ pub struct SystemHandle {
     registry: Arc<Mutex<Vec<RegistryEntry>>>,
     system_state: Arc<RwLock<SystemState>>,
     callbacks: Arc<SystemCallbacks>,
+
+    event_subscribers: Arc<RwLock<EventSubscribers>>,
 }
 
 /// An execution context for a specific actor. Specifically, this is useful for managing
@@ -235,6 +282,18 @@ impl<M> Context<M> {
     /// Convenience variant of [`Self::set_deadline()`].
     pub fn set_timeout(&mut self, timeout: Option<Duration>) {
         self.set_deadline(timeout.map(|t| Instant::now() + t));
+    }
+
+    /// Subscribe current actor to event of type `E`. This is part of the event system. You don't
+    /// need to call this method to receive direct messages sent using [`Addr`] and [`Recipient`].
+    ///
+    /// Note that subscribing twice to the same event would result in duplicate events -- no
+    /// de-duplication of subscriptions is performed.
+    pub fn subscribe<E: Event + Into<M>>(&self)
+    where
+        M: 'static,
+    {
+        self.system_handle.subscribe_recipient::<M, E>(self.myself.clone());
     }
 }
 
@@ -643,6 +702,41 @@ impl SystemHandle {
         } else {
             Ok(())
         }
+    }
+
+    /// Subscribe given `recipient` to events of type `E`. See [`Context::subscribe()`].
+    pub fn subscribe_recipient<M: 'static, E: Event + Into<M>>(&self, recipient: Recipient<M>) {
+        let mut event_subscribers = self.event_subscribers.write();
+
+        let subs = event_subscribers.events.entry(TypeId::of::<E>()).or_default();
+
+        subs.push(Box::new(move |e| {
+            if let Some(event) = e.downcast_ref::<E>() {
+                let msg = event.clone();
+                recipient.send(msg.into())?;
+            }
+
+            Ok(())
+        }));
+    }
+
+    /// Publish an event. All actors that have previously subscribed to the type will receive it.
+    ///
+    /// When sending to some subscriber fails, others are still tried and vec of errors is returned.
+    /// For direct, non-[`Clone`] or high-throughput messages please use [`Addr`] or [`Recipient`].
+    pub fn publish<E: Event>(&self, event: E) -> Result<(), PublishError> {
+        let event_subscribers = self.event_subscribers.read();
+        if let Some(subs) = event_subscribers.events.get(&TypeId::of::<E>()) {
+            let errors: Vec<SendError> = subs
+                .iter()
+                .filter_map(|subscriber_callback| subscriber_callback(&event).err())
+                .collect();
+            if !errors.is_empty() {
+                return Err(PublishError(errors));
+            }
+        }
+
+        Ok(())
     }
 
     pub fn is_running(&self) -> bool {

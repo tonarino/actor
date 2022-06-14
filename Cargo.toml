@@ -26,3 +26,7 @@ num_cpus = "1"
 [[bench]]
 name = "benches"
 harness = false
+
+[[bench]]
+name = "pub_sub"
+harness = false

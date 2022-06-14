@@ -16,7 +16,7 @@
 //!
 //! See `delay_actor.rs` example for usage.
 
-use crate::{Actor, Context, Priority, Recipient, SendError, SystemHandle};
+use crate::{Actor, Context, Event, Priority, Recipient, SendError, SystemHandle};
 use std::{
     cmp::Ordering,
     collections::BinaryHeap,
@@ -91,6 +91,16 @@ impl<M> TimedContext<M> {
             system_handle: context.system_handle.clone(),
             myself: context.myself.clone(),
         }
+    }
+
+    /// Subscribe current actor to event of type `E`. Events will be delivered as instant messages.
+    /// See [`crate::Context::subscribe()`].
+    pub fn subscribe<E: Event + Into<M>>(&self)
+    where
+        M: 'static,
+    {
+        // The recipient() call allows conversion from M to TimedMessage<M>.
+        self.system_handle.subscribe_recipient::<M, E>(self.myself.recipient());
     }
 }
 
