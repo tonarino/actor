@@ -1119,7 +1119,7 @@ mod tests {
         let _ = system.prepare_fn(LocalActor::default).spawn().unwrap();
 
         // Allowable, as the struct will be run on the current thread.
-        let _ = system.prepare(LocalActor::default()).run_and_block().unwrap();
+        system.prepare(LocalActor::default()).run_and_block().unwrap();
 
         system.shutdown().unwrap();
     }
