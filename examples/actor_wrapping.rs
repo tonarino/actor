@@ -14,6 +14,9 @@ impl<A: Actor> Actor for LoggingAdapter<A> {
     type Error = A::Error;
     type Message = A::Message;
 
+    const DEFAULT_CAPACITY_HIGH: usize = A::DEFAULT_CAPACITY_HIGH;
+    const DEFAULT_CAPACITY_NORMAL: usize = A::DEFAULT_CAPACITY_NORMAL;
+
     fn handle(
         &mut self,
         context: &mut Self::Context,

@@ -116,6 +116,9 @@ impl Actor for Output {
     type Error = Error;
     type Message = Chunk;
 
+    // Set larger message channel capacity for Output actor for some cushion.
+    const DEFAULT_CAPACITY_NORMAL: usize = 60;
+
     fn name() -> &'static str {
         "Output"
     }
@@ -273,8 +276,7 @@ fn main() -> Result<(), Error> {
     let mut system = System::new("Echo System");
 
     // Start creating actors. Because actors "point forward", start with the last one.
-    // Set larger message channel capacity for Output actor for some cushion.
-    let output_addr = system.prepare(Output).with_capacity(60).spawn()?;
+    let output_addr = system.spawn(Output)?;
 
     // Create Mixer address explicitly in order to break the circular dependency loop.
     let mixer_addr = Addr::default();
