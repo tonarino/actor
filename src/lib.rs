@@ -1,4 +1,4 @@
-#![warn(clippy::all)]
+#![warn(clippy::all, clippy::clone_on_ref_ptr)]
 
 //! This crate aims to provide a minimalist and high-performance actor framework
 //! for Rust with significantly less complexity than other frameworks like
@@ -937,7 +937,7 @@ pub struct Recipient<M> {
 // https://github.com/rust-lang/rust/issues/26925
 impl<M> Clone for Recipient<M> {
     fn clone(&self) -> Self {
-        Self { message_tx: self.message_tx.clone(), control_tx: self.control_tx.clone() }
+        Self { message_tx: Arc::clone(&self.message_tx), control_tx: self.control_tx.clone() }
     }
 }
 
@@ -958,7 +958,7 @@ impl<M: 'static> Recipient<M> {
     pub fn recipient<N: Into<M>>(&self) -> Recipient<N> {
         Recipient {
             // Each level of boxing adds one .into() call, so box here to convert A::Message to M.
-            message_tx: Arc::new(self.message_tx.clone()),
+            message_tx: Arc::new(Arc::clone(&self.message_tx)),
             control_tx: self.control_tx.clone(),
         }
     }
