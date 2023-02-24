@@ -116,6 +116,32 @@ impl<M: Send + 'static, A: Actor<Context = TimedContext<M>, Message = M>> Timed<
         Self { inner, queue: Default::default() }
     }
 
+    /// Process any pending messages in the internal queue, calling wrapped actor's `handle()`.
+    fn process_queue(&mut self, context: &mut <Self as Actor>::Context) -> Result<(), A::Error> {
+        // Handle all messages that should have been handled by now.
+        let now = Instant::now();
+        while self.queue.peek().map(|m| m.fire_at <= now).unwrap_or(false) {
+            let item = self.queue.pop().expect("heap is non-empty, we have just peeked");
+
+            let message = match item.payload {
+                Payload::Delayed { message } => message,
+                Payload::Recurring { mut factory, interval } => {
+                    let message = factory();
+                    self.queue.push(QueueItem {
+                        fire_at: item.fire_at + interval,
+                        payload: Payload::Recurring { factory, interval },
+                    });
+                    message
+                },
+            };
+
+            // Let inner actor do its job.
+            self.inner.handle(&mut TimedContext::from_context(context), message)?;
+        }
+
+        Ok(())
+    }
+
     fn schedule_timeout(&self, context: &mut <Self as Actor>::Context) {
         // Schedule next timeout if the queue is not empty.
         context.set_deadline(self.queue.peek().map(|earliest| earliest.fire_at));
@@ -135,6 +161,11 @@ impl<M: Send + 'static, A: Actor<Context = TimedContext<M>, Message = M>> Actor 
         context: &mut Self::Context,
         timed_message: Self::Message,
     ) -> Result<(), Self::Error> {
+        // Process any expired items in the queue. It is somewhat arbitrary whether that is before
+        // or after handling `timed_message` (imagine actor is busy 100% of the time). We cannot
+        // easily use message priorities as that is determined rather late for recurring messages.
+        self.process_queue(context)?;
+
         let item = match timed_message {
             TimedMessage::Instant { message } => {
                 return self.inner.handle(&mut TimedContext::from_context(context), message);
@@ -182,27 +213,7 @@ impl<M: Send + 'static, A: Actor<Context = TimedContext<M>, Message = M>> Actor 
         context: &mut Self::Context,
         _deadline: Instant,
     ) -> Result<(), Self::Error> {
-        // Handle all messages that should have been handled by now.
-        let now = Instant::now();
-        while self.queue.peek().map(|m| m.fire_at <= now).unwrap_or(false) {
-            let item = self.queue.pop().expect("heap is non-empty, we have just peeked");
-
-            let message = match item.payload {
-                Payload::Delayed { message } => message,
-                Payload::Recurring { mut factory, interval } => {
-                    let message = factory();
-                    self.queue.push(QueueItem {
-                        fire_at: item.fire_at + interval,
-                        payload: Payload::Recurring { factory, interval },
-                    });
-                    message
-                },
-            };
-
-            // Let inner actor do its job.
-            self.inner.handle(&mut TimedContext::from_context(context), message)?;
-        }
-
+        self.process_queue(context)?;
         self.schedule_timeout(context);
         Ok(())
     }
