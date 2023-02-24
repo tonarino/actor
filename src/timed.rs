@@ -249,3 +249,73 @@ enum Payload<M> {
     Delayed { message: M },
     Recurring { factory: Box<dyn FnMut() -> M + Send>, interval: Duration },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::System;
+    use std::{
+        sync::{Arc, Mutex},
+        thread,
+    };
+
+    struct TimedTestActor {
+        received: Arc<Mutex<Vec<usize>>>,
+    }
+
+    impl Actor for TimedTestActor {
+        type Context = TimedContext<Self::Message>;
+        type Error = ();
+        type Message = usize;
+
+        fn name() -> &'static str {
+            "TimedTestActor"
+        }
+
+        fn handle(&mut self, context: &mut Self::Context, message: usize) -> Result<(), ()> {
+            {
+                let mut guard = self.received.lock().unwrap();
+                guard.push(message);
+            }
+
+            // Messages 1 or 3 are endless self-sending ones, keep to loop spinning.
+            if message == 1 || message == 3 {
+                thread::sleep(Duration::from_millis(100));
+                context.myself.send_now(3).unwrap();
+            }
+
+            Ok(())
+        }
+
+        fn started(&mut self, context: &mut Self::Context) {
+            context
+                .myself
+                .send_recurring(
+                    || 2,
+                    Instant::now() + Duration::from_millis(50),
+                    Duration::from_millis(100),
+                )
+                .unwrap()
+        }
+    }
+
+    #[test]
+    fn recurring_messages_for_busy_actors() {
+        let received = Arc::new(Mutex::new(Vec::new()));
+
+        let mut system = System::new("timed test");
+        let address =
+            system.spawn(Timed::new(TimedTestActor { received: Arc::clone(&received) })).unwrap();
+        address.send_now(1).unwrap();
+        thread::sleep(Duration::from_millis(225));
+
+        // The order of messages should be:
+        // 1 (initial message),
+        // 2 (first recurring scheduled message),
+        // 3 (first self-sent message),
+        // 2 (second recurring message)
+        // 3 (second self-sent message)
+        assert_eq!(*received.lock().unwrap(), vec![1, 2, 3, 2, 3]);
+        system.shutdown().unwrap();
+    }
+}
