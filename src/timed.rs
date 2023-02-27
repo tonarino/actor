@@ -136,6 +136,12 @@ impl<M: Send + 'static, A: Actor<Context = TimedContext<M>, Message = M>> Timed<
             };
 
             // Let inner actor do its job.
+            //
+            // Alternatively, we could send an `Instant` message to ourselves.
+            // - The advantage would be that it would go into the queue with proper priority. But it
+            //   is unclear what should be handled first: normal-priority message that should have
+            //   been processed a while ago, or a high-priority message that was delivered now.
+            // - Disadvantage is we could easily overflow the queue if many messages fire at once.
             self.inner.handle(&mut TimedContext::from_context(context), message)?;
         }
 
@@ -161,24 +167,24 @@ impl<M: Send + 'static, A: Actor<Context = TimedContext<M>, Message = M>> Actor 
         context: &mut Self::Context,
         timed_message: Self::Message,
     ) -> Result<(), Self::Error> {
-        // Process any expired items in the queue. It is somewhat arbitrary whether that is before
-        // or after handling `timed_message` (imagine actor is busy 100% of the time). We cannot
-        // easily use message priorities as that is determined rather late for recurring messages.
-        self.process_queue(context)?;
-
-        let item = match timed_message {
+        match timed_message {
             TimedMessage::Instant { message } => {
-                return self.inner.handle(&mut TimedContext::from_context(context), message);
+                self.inner.handle(&mut TimedContext::from_context(context), message)?;
             },
             TimedMessage::Delayed { message, fire_at } => {
-                QueueItem { fire_at, payload: Payload::Delayed { message } }
+                self.queue.push(QueueItem { fire_at, payload: Payload::Delayed { message } });
             },
             TimedMessage::Recurring { factory, fire_at, interval } => {
-                QueueItem { fire_at, payload: Payload::Recurring { factory, interval } }
+                self.queue
+                    .push(QueueItem { fire_at, payload: Payload::Recurring { factory, interval } });
             },
         };
 
-        self.queue.push(item);
+        // Process any expired items in the queue. In case that the actor is non-stop busy (there's
+        // always a message in its queue, perhaps because it sends a message itself in handle()),
+        // this would be the only occasion where we go through it.
+        self.process_queue(context)?;
+
         self.schedule_timeout(context);
         Ok(())
     }
