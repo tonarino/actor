@@ -295,7 +295,7 @@ mod tests {
                 guard.push(message);
             }
 
-            // Messages 1 or 3 are endless self-sending ones, keep to loop spinning.
+            // Messages 1 or 3 are endless self-sending ones, keep the loop spinning.
             if message == 1 || message == 3 {
                 thread::sleep(Duration::from_millis(100));
                 context.myself.send_now(3).unwrap();
