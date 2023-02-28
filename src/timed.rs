@@ -181,7 +181,7 @@ impl<M: Send + 'static, A: Actor<Context = TimedContext<M>, Message = M>> Actor 
         };
 
         // Process any expired items in the queue. In case that the actor is non-stop busy (there's
-        // always a message in its queue, perhaps because it sends a message itself in handle()),
+        // always a message in its queue, perhaps because it sends a message to itself in handle()),
         // this would be the only occasion where we go through it.
         self.process_queue(context)?;
 
