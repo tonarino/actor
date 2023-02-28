@@ -116,6 +116,38 @@ impl<M: Send + 'static, A: Actor<Context = TimedContext<M>, Message = M>> Timed<
         Self { inner, queue: Default::default() }
     }
 
+    /// Process any pending messages in the internal queue, calling wrapped actor's `handle()`.
+    fn process_queue(&mut self, context: &mut <Self as Actor>::Context) -> Result<(), A::Error> {
+        // Handle all messages that should have been handled by now.
+        let now = Instant::now();
+        while self.queue.peek().map(|m| m.fire_at <= now).unwrap_or(false) {
+            let item = self.queue.pop().expect("heap is non-empty, we have just peeked");
+
+            let message = match item.payload {
+                Payload::Delayed { message } => message,
+                Payload::Recurring { mut factory, interval } => {
+                    let message = factory();
+                    self.queue.push(QueueItem {
+                        fire_at: item.fire_at + interval,
+                        payload: Payload::Recurring { factory, interval },
+                    });
+                    message
+                },
+            };
+
+            // Let inner actor do its job.
+            //
+            // Alternatively, we could send an `Instant` message to ourselves.
+            // - The advantage would be that it would go into the queue with proper priority. But it
+            //   is unclear what should be handled first: normal-priority message that should have
+            //   been processed a while ago, or a high-priority message that was delivered now.
+            // - Disadvantage is we could easily overflow the queue if many messages fire at once.
+            self.inner.handle(&mut TimedContext::from_context(context), message)?;
+        }
+
+        Ok(())
+    }
+
     fn schedule_timeout(&self, context: &mut <Self as Actor>::Context) {
         // Schedule next timeout if the queue is not empty.
         context.set_deadline(self.queue.peek().map(|earliest| earliest.fire_at));
@@ -135,19 +167,24 @@ impl<M: Send + 'static, A: Actor<Context = TimedContext<M>, Message = M>> Actor 
         context: &mut Self::Context,
         timed_message: Self::Message,
     ) -> Result<(), Self::Error> {
-        let item = match timed_message {
+        match timed_message {
             TimedMessage::Instant { message } => {
-                return self.inner.handle(&mut TimedContext::from_context(context), message);
+                self.inner.handle(&mut TimedContext::from_context(context), message)?;
             },
             TimedMessage::Delayed { message, fire_at } => {
-                QueueItem { fire_at, payload: Payload::Delayed { message } }
+                self.queue.push(QueueItem { fire_at, payload: Payload::Delayed { message } });
             },
             TimedMessage::Recurring { factory, fire_at, interval } => {
-                QueueItem { fire_at, payload: Payload::Recurring { factory, interval } }
+                self.queue
+                    .push(QueueItem { fire_at, payload: Payload::Recurring { factory, interval } });
             },
         };
 
-        self.queue.push(item);
+        // Process any expired items in the queue. In case that the actor is non-stop busy (there's
+        // always a message in its queue, perhaps because it sends a message to itself in handle()),
+        // this would be the only occasion where we go through it.
+        self.process_queue(context)?;
+
         self.schedule_timeout(context);
         Ok(())
     }
@@ -182,27 +219,7 @@ impl<M: Send + 'static, A: Actor<Context = TimedContext<M>, Message = M>> Actor 
         context: &mut Self::Context,
         _deadline: Instant,
     ) -> Result<(), Self::Error> {
-        // Handle all messages that should have been handled by now.
-        let now = Instant::now();
-        while self.queue.peek().map(|m| m.fire_at <= now).unwrap_or(false) {
-            let item = self.queue.pop().expect("heap is non-empty, we have just peeked");
-
-            let message = match item.payload {
-                Payload::Delayed { message } => message,
-                Payload::Recurring { mut factory, interval } => {
-                    let message = factory();
-                    self.queue.push(QueueItem {
-                        fire_at: item.fire_at + interval,
-                        payload: Payload::Recurring { factory, interval },
-                    });
-                    message
-                },
-            };
-
-            // Let inner actor do its job.
-            self.inner.handle(&mut TimedContext::from_context(context), message)?;
-        }
-
+        self.process_queue(context)?;
         self.schedule_timeout(context);
         Ok(())
     }
@@ -248,4 +265,74 @@ impl<M> Ord for QueueItem<M> {
 enum Payload<M> {
     Delayed { message: M },
     Recurring { factory: Box<dyn FnMut() -> M + Send>, interval: Duration },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::System;
+    use std::{
+        sync::{Arc, Mutex},
+        thread,
+    };
+
+    struct TimedTestActor {
+        received: Arc<Mutex<Vec<usize>>>,
+    }
+
+    impl Actor for TimedTestActor {
+        type Context = TimedContext<Self::Message>;
+        type Error = ();
+        type Message = usize;
+
+        fn name() -> &'static str {
+            "TimedTestActor"
+        }
+
+        fn handle(&mut self, context: &mut Self::Context, message: usize) -> Result<(), ()> {
+            {
+                let mut guard = self.received.lock().unwrap();
+                guard.push(message);
+            }
+
+            // Messages 1 or 3 are endless self-sending ones, keep the loop spinning.
+            if message == 1 || message == 3 {
+                thread::sleep(Duration::from_millis(100));
+                context.myself.send_now(3).unwrap();
+            }
+
+            Ok(())
+        }
+
+        fn started(&mut self, context: &mut Self::Context) {
+            context
+                .myself
+                .send_recurring(
+                    || 2,
+                    Instant::now() + Duration::from_millis(50),
+                    Duration::from_millis(100),
+                )
+                .unwrap()
+        }
+    }
+
+    #[test]
+    fn recurring_messages_for_busy_actors() {
+        let received = Arc::new(Mutex::new(Vec::new()));
+
+        let mut system = System::new("timed test");
+        let address =
+            system.spawn(Timed::new(TimedTestActor { received: Arc::clone(&received) })).unwrap();
+        address.send_now(1).unwrap();
+        thread::sleep(Duration::from_millis(225));
+
+        // The order of messages should be:
+        // 1 (initial message),
+        // 2 (first recurring scheduled message),
+        // 3 (first self-sent message),
+        // 2 (second recurring message)
+        // 3 (second self-sent message)
+        assert_eq!(*received.lock().unwrap(), vec![1, 2, 3, 2, 3]);
+        system.shutdown().unwrap();
+    }
 }

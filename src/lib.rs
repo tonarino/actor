@@ -1170,7 +1170,7 @@ mod tests {
         let addr = system.spawn(actor).unwrap();
 
         // Test that setting deadline to past triggers the deadline immediately.
-        addr.send(Some(Instant::now() - Duration::from_secs(1))).unwrap();
+        addr.send(Some(Instant::now().checked_sub(Duration::from_secs(1)).unwrap())).unwrap();
         thread::sleep(Duration::from_millis(10));
         assert_eq!(handle_count.load(Ordering::SeqCst), 1);
         assert_eq!(timeout_count.load(Ordering::SeqCst), 1);
