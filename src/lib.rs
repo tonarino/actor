@@ -208,9 +208,10 @@ pub struct SystemCallbacks {
     pub postshutdown: Option<SystemCallback>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Default, PartialEq)]
 enum SystemState {
     /// The system is running and able to spawn new actors, or be asked to shut down
+    #[default]
     Running,
 
     /// The system is in the process of shutting down, actors cannot be spawned
@@ -221,12 +222,6 @@ enum SystemState {
     /// All actors have stopped and their threads have been joined. No actors
     /// may be spawned at this point.
     Stopped,
-}
-
-impl Default for SystemState {
-    fn default() -> Self {
-        SystemState::Running
-    }
 }
 
 /// A marker trait for types which participate in the publish-subscribe system
