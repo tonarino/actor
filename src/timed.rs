@@ -251,14 +251,14 @@ impl<M> Eq for QueueItem<M> {}
 
 impl<M> PartialOrd for QueueItem<M> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        // Reverse because [BinaryHeap] is a *max* heap, but we want pop() to return lowest `fire_at`.
-        Some(self.fire_at.cmp(&other.fire_at).reverse())
+        Some(self.cmp(other))
     }
 }
 
 impl<M> Ord for QueueItem<M> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).expect("we can always compare")
+        // Reverse because [BinaryHeap] is a *max* heap, but we want pop() to return lowest `fire_at`.
+        self.fire_at.cmp(&other.fire_at).reverse()
     }
 }
 
