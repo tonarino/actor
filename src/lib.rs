@@ -1,4 +1,4 @@
-#![warn(clippy::all, clippy::clone_on_ref_ptr)]
+#![warn(clippy::clone_on_ref_ptr, clippy::todo)]
 
 //! This crate aims to provide a minimalist and high-performance actor framework
 //! for Rust with significantly less complexity than other frameworks like
