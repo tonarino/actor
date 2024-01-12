@@ -316,8 +316,10 @@ mod tests {
         }
     }
 
+    /// Tests that recurring messages still get in for actors that have one "tick" message type that
+    /// does `block_for_some_time(); myself.send_now(Tick);` in its handle().
     #[test]
-    fn recurring_messages_for_busy_actors() {
+    fn recurring_messages_for_self_looping_actors() {
         let received = Arc::new(Mutex::new(Vec::new()));
 
         let mut system = System::new("timed test");
@@ -325,14 +327,17 @@ mod tests {
             system.spawn(Timed::new(TimedTestActor { received: Arc::clone(&received) })).unwrap();
         address.send_now(1).unwrap();
         thread::sleep(Duration::from_millis(225));
-
-        // The order of messages should be:
-        // 1 (initial message),
-        // 2 (first recurring scheduled message),
-        // 3 (first self-sent message),
-        // 2 (second recurring message)
-        // 3 (second self-sent message)
-        assert_eq!(*received.lock().unwrap(), vec![1, 2, 3, 2, 3]);
         system.shutdown().unwrap();
+
+        // The timeline (order of messages received) is:
+        // at   0 ms: 1 (initial message, takes 100 ms to handle),
+        // at 100 ms: 2 (first recurring scheduled message, delivered 50 ms late),
+        // at 100 ms: 3 (first self-sent message, 100 ms to handle),
+        // at 200 ms: 2 (second recurring message, 50 ms late, in the same ^^^ handle() invocation)
+        // at 200 ms: 3 (second self-sent message, 100 ms to handle)
+        // at 225 ms:   (control message to shut down the actor sent)
+        // at 300 ms: 2 (third recurring message, 50 ms late, in the same ^^^ handle() invocation)
+        // at 300 ms:   (control signal to shut down finally delivered to the actor)
+        assert_eq!(*received.lock().unwrap(), vec![1, 2, 3, 2, 3, 2]);
     }
 }
