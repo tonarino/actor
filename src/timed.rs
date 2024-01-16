@@ -26,8 +26,13 @@ use std::{
 
 /// A message that can be enqueued now, at certain time and optionally repeatedly.
 pub enum TimedMessage<M> {
+    /// Instant message `handle()`d by the wrapped actor right away.
     Instant { message: M },
+    /// Request to setup a delayed message. Goes to internal [`Timed`] wrapper queue and then gets
+    /// sent to ourselves as an `Instant` message at the specified time.
     Delayed { message: M, enqueue_at: Instant },
+    /// Request to setup a recurring message. Goes to internal [`Timed`] wrapper queue and then gets
+    /// sent to ourselves as an `Instant` message regularly at the specified pace.
     Recurring { factory: Box<dyn FnMut() -> M + Send>, enqueue_at: Instant, interval: Duration },
 }
 
@@ -121,9 +126,10 @@ where
 
     /// Process any pending messages in the internal queue, calling wrapped actor's `handle()`.
     fn process_queue(&mut self, context: &mut <Self as Actor>::Context) -> Result<(), SendError> {
-        // If the message on top of the queue is due, send it to the regular actor queue.
-        // No problem if there are multiple such messages, it's handle() will call process_queue()
-        // again.
+        // If the message on top of the queue is due, send it to ourselves as `Instant` to enqueue
+        // it in the regular actor queue.
+        // No problem if there are multiple such messages, the next Timed::handle() will call
+        // process_queue() again.
         if self.queue.peek().map(|m| m.enqueue_at <= Instant::now()).unwrap_or(false) {
             let item = self.queue.pop().expect("heap is non-empty, we have just peeked");
 
@@ -201,8 +207,10 @@ where
         match message {
             // Use underlying message priority for instant messages.
             TimedMessage::Instant { message } => A::priority(message),
-            // Recurring and Delayed messages are only added to the queue when handled, and then go
-            // through actors priority inboxes again when actually enqueued.
+            // These priorities apply to the *set-up* of Delayed and Recurring messages and we
+            // want to handle that pronto.
+            // The resulting inner message then comes back as `Instant` and is prioritized per its
+            // underlying priority.
             TimedMessage::Recurring { .. } | TimedMessage::Delayed { .. } => Priority::High,
         }
     }
@@ -303,7 +311,7 @@ mod tests {
                 context.myself.send_now(3).unwrap();
             }
 
-            // Message 2 is a recurring one, sleep based on a paremeter.
+            // Message 2 is a recurring one, sleep based on a parameter.
             if message == 2 {
                 thread::sleep(self.recurring_message_sleep);
             }
