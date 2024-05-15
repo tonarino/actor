@@ -353,7 +353,11 @@ impl<'a, A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce
     pub fn run_and_block(self) -> Result<(), ActorError> {
         let factory = self.factory;
         let capacity = self.capacity;
-        let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
+        let addr = self.addr.unwrap_or_else(|| {
+            warn!("Actor {} does not have an assigned address, creating an address with capacity {}",
+                A::name(), capacity);
+            Addr::with_capacity(capacity)
+        });
 
         self.system.block_on(factory(), addr)
     }
@@ -369,7 +373,11 @@ impl<
     pub fn spawn(self) -> Result<Addr<A>, ActorError> {
         let factory = self.factory;
         let capacity = self.capacity;
-        let addr = self.addr.unwrap_or_else(|| Addr::with_capacity(capacity));
+        let addr = self.addr.unwrap_or_else(|| {
+            warn!("Actor {} does not have an assigned address; creating an address with capacity {}",
+                A::name(), capacity);
+            Addr::with_capacity(capacity)
+        });
 
         self.system.spawn_fn_with_addr(factory, addr.clone()).map(move |_| addr)
     }
