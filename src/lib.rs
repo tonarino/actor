@@ -294,7 +294,7 @@ impl<M> Context<M> {
 
 /// Capacity of actor's normal- and high-priority inboxes.
 /// For each inbox type, `None` signifies default capacity of given actor. Converts from [`usize`].
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Capacity {
     pub normal: Option<usize>,
     pub high: Option<usize>,
@@ -350,16 +350,22 @@ impl<'a, A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce
     /// Run this Actor on the current calling thread. This is a
     /// blocking call. This function will exit when the Actor
     /// has stopped.
-    pub fn run_and_block(self) -> Result<(), ActorError> {
+    pub fn run_and_block(mut self) -> Result<(), ActorError> {
+        let addr = self.make_address();
         let factory = self.factory;
-        let capacity = self.capacity;
-        let addr = self.addr.unwrap_or_else(|| {
-            warn!("Actor {} does not have an assigned address, creating an address with capacity {}",
-                A::name(), capacity);
-            Addr::with_capacity(capacity)
-        });
-
         self.system.block_on(factory(), addr)
+    }
+
+    fn make_address(&mut self) -> Addr<A> {
+        if let Some(addr) = self.addr.take() {
+            return addr;
+        }
+
+        if self.capacity == Default::default() {
+            warn!("Creating a default address for actor {}.", A::name());
+        }
+
+        Addr::with_capacity(self.capacity)
     }
 }
 
@@ -370,15 +376,9 @@ impl<
     > SpawnBuilder<'a, A, F>
 {
     /// Spawn this Actor into a new thread managed by the [`System`].
-    pub fn spawn(self) -> Result<Addr<A>, ActorError> {
+    pub fn spawn(mut self) -> Result<Addr<A>, ActorError> {
+        let addr = self.make_address();
         let factory = self.factory;
-        let capacity = self.capacity;
-        let addr = self.addr.unwrap_or_else(|| {
-            warn!("Actor {} does not have an assigned address; creating an address with capacity {}",
-                A::name(), capacity);
-            Addr::with_capacity(capacity)
-        });
-
         self.system.spawn_fn_with_addr(factory, addr.clone()).map(move |_| addr)
     }
 }
