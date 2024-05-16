@@ -1037,7 +1037,6 @@ impl<M: Into<N>, N> SenderTrait<M> for Arc<dyn SenderTrait<N>> {
 #[cfg(test)]
 mod tests {
     use std::{
-        rc::Rc,
         sync::atomic::{AtomicU32, Ordering},
         time::Duration,
     };
@@ -1103,7 +1102,7 @@ mod tests {
     #[test]
     fn send_constraints() {
         #[derive(Default)]
-        struct LocalActor(Rc<()>);
+        struct LocalActor(());
         impl Actor for LocalActor {
             type Context = Context<Self::Message>;
             type Error = ();
