@@ -57,7 +57,7 @@ fn main() -> Result<(), Error> {
     let mut system = System::new("Example Timer System");
 
     let timer_actor = TimerExampleActor::new();
-    system.prepare(timer_actor).run_and_block()?;
+    system.prepare(timer_actor).with_default_capacity().run_and_block()?;
 
     Ok(())
 }

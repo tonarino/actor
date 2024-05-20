@@ -157,9 +157,9 @@ fn main() -> Result<(), Error> {
     let mut system = System::new("Example PubSub System");
 
     let publisher_actor = PublisherActor::new();
-    let _ = system.prepare(publisher_actor).spawn()?;
-    let _ = system.prepare(SubscriberActor1).spawn()?;
-    let _ = system.prepare(SubscriberActor2).spawn()?;
+    let _ = system.prepare(publisher_actor).with_default_capacity().spawn()?;
+    let _ = system.prepare(SubscriberActor1).with_default_capacity().spawn()?;
+    let _ = system.prepare(SubscriberActor2).with_default_capacity().spawn()?;
 
     system.publish(StringEvent("Hello from the main thread!".to_string()))?;
 
