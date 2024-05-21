@@ -1100,7 +1100,7 @@ mod tests {
     #[test]
     fn send_constraints() {
         #[derive(Default)]
-        struct LocalActor(());
+        struct LocalActor;
         impl Actor for LocalActor {
             type Context = Context<Self::Message>;
             type Error = ();
@@ -1123,10 +1123,10 @@ mod tests {
         let mut system = System::new("main");
 
         // Allowable, as the struct will be created on the new thread.
-        let _ = system.prepare_fn(LocalActor::default).with_default_capacity().spawn().unwrap();
+        let _ = system.prepare_fn(|| LocalActor).with_default_capacity().spawn().unwrap();
 
         // Allowable, as the struct will be run on the current thread.
-        system.prepare(LocalActor::default()).with_default_capacity().run_and_block().unwrap();
+        system.prepare(LocalActor).with_default_capacity().run_and_block().unwrap();
 
         system.shutdown().unwrap();
     }
