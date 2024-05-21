@@ -321,7 +321,7 @@ impl From<usize> for Capacity {
 
 /// A builder for configuring [`Actor`] spawning.
 /// You can specify your own [`Addr`] for the Actor, or let the system create
-/// a new address either provided or default capacity.
+/// a new address with either provided or default capacity.
 #[must_use = "You must call .with_addr(), .with_capacity(), or .with_default_capacity() to configure this builder"]
 pub struct SpawnBuilderWithoutAddress<'a, A: Actor, F: FnOnce() -> A> {
     system: &'a mut System,
@@ -342,14 +342,14 @@ impl<'a, A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce
         SpawnBuilderWithAddress { spawn_builder: self, addr }
     }
 
-    // Use the default capacity for the actor's receiving channel.
+    /// Use the default capacity for the actor's receiving channel.
     pub fn with_default_capacity(self) -> SpawnBuilderWithAddress<'a, A, F> {
         let addr = Addr::with_capacity(Capacity::default());
         SpawnBuilderWithAddress { spawn_builder: self, addr }
     }
 }
 
-#[must_use = "You must call .spawn() or .run_and_block() to create an actor"]
+#[must_use = "You must call .spawn() or .run_and_block() to run an actor"]
 /// After having configured the builder with an address
 /// it is possible to create and run the actor either on a new thread with `spawn()`
 /// or on the current thread with `run_and_block()`.
