@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use tonari_actor::{Actor, Context, Event, Recipient, System};
 
 #[derive(Debug, Clone)]
-struct StringEvent(String);
+struct StringEvent;
 
 impl Event for StringEvent {}
 
@@ -45,7 +45,7 @@ impl Actor for PublisherActor {
             PublisherMessage::PublishEvents => {
                 let start = Instant::now();
                 for _i in 0..self.iterations {
-                    context.system_handle.publish(StringEvent("hello".to_string()))?;
+                    context.system_handle.publish(StringEvent)?;
                 }
                 let elapsed = start.elapsed();
 

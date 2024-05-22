@@ -89,7 +89,7 @@ fn main() -> Result<(), Error> {
     let mut system = System::new("Actor Wrapping Example");
 
     let actor = LoggingAdapter { inner: TestActor {} };
-    system.prepare(actor).run_and_block()?;
+    system.prepare(actor).with_default_capacity().run_and_block()?;
 
     Ok(())
 }
