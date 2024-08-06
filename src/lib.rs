@@ -226,11 +226,14 @@ enum SystemState {
 
 /// A marker trait for types which participate in the publish-subscribe system
 /// of the actor framework.
-pub trait Event: Clone + std::any::Any + 'static {}
+pub trait Event: Clone + std::any::Any + 'static + Send + Sync {}
 
 #[derive(Default)]
 struct EventSubscribers {
     events: HashMap<TypeId, Vec<EventCallback>>,
+    /// We cache the last published value of each event type.
+    /// Subscribers can request to receive it upon subscription.
+    last_value_cache: HashMap<TypeId, Box<dyn std::any::Any + Send + Sync>>,
 }
 
 /// Contains the "metadata" of the system, including information about the registry
@@ -289,6 +292,19 @@ impl<M> Context<M> {
         M: 'static,
     {
         self.system_handle.subscribe_recipient::<M, E>(self.myself.clone());
+    }
+
+    /// Subscribe current actor to event of type `E` and send the last cached event to it.
+    /// This is part of the event system. You don't need to call this method to receive
+    /// direct messages sent using [`Addr`] and [`Recipient`].
+    ///
+    /// Note that subscribing twice to the same event would result in duplicate events -- no
+    /// de-duplication of subscriptions is performed.
+    pub fn subscribe_and_receive_latest<E: Event + Into<M>>(&self) -> Result<(), SendError>
+    where
+        M: 'static,
+    {
+        self.system_handle.subscribe_and_receive_latest::<M, E>(self.myself.clone())
     }
 }
 
@@ -728,13 +744,51 @@ impl SystemHandle {
         }));
     }
 
+    /// Subscribe given `recipient` to events of type `E` and send the last cached event to it.
+    /// See [`Context::subscribe_and_receive_latest()`].
+    pub fn subscribe_and_receive_latest<M: 'static, E: Event + Into<M>>(
+        &self,
+        recipient: Recipient<M>,
+    ) -> Result<(), SendError> {
+        let mut event_subscribers = self.event_subscribers.write();
+
+        // Send the last cached value if there is one.
+        if let Some(last_cached_value) = event_subscribers.last_value_cache.get(&TypeId::of::<E>())
+        {
+            if let Some(msg) = last_cached_value.downcast_ref::<E>() {
+                recipient.send(msg.clone().into())?;
+            }
+        }
+
+        // Duplicate the contents of Self::subscribe_recipient() to reuse the same WriteGuard
+        // for better performance.
+        let subs = event_subscribers.events.entry(TypeId::of::<E>()).or_default();
+        subs.push(Box::new(move |e| {
+            if let Some(event) = e.downcast_ref::<E>() {
+                let msg = event.clone();
+                recipient.send(msg.into())?;
+            }
+
+            Ok(())
+        }));
+
+        Ok(())
+    }
+
     /// Publish an event. All actors that have previously subscribed to the type will receive it.
+    ///
+    /// The event will be also cached. Actors that will subscribe to the type in future may choose
+    /// to receive the last cached event upon subscription.
     ///
     /// When sending to some subscriber fails, others are still tried and vec of errors is returned.
     /// For direct, non-[`Clone`] or high-throughput messages please use [`Addr`] or [`Recipient`].
     pub fn publish<E: Event>(&self, event: E) -> Result<(), PublishError> {
-        let event_subscribers = self.event_subscribers.read();
-        if let Some(subs) = event_subscribers.events.get(&TypeId::of::<E>()) {
+        let mut event_subscribers = self.event_subscribers.write();
+        let type_id = TypeId::of::<E>();
+
+        event_subscribers.last_value_cache.insert(type_id, Box::new(event.clone()));
+
+        if let Some(subs) = event_subscribers.events.get(&type_id) {
             let errors: Vec<SendError> = subs
                 .iter()
                 .filter_map(|subscriber_callback| subscriber_callback(&event).err())
@@ -1291,5 +1345,47 @@ mod tests {
             *received.lock(),
             [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
         );
+    }
+
+    #[test]
+    fn last_cached_event() {
+        impl Event for () {}
+
+        struct Subscriber;
+        impl Actor for Subscriber {
+            type Context = Context<Self::Message>;
+            type Error = ();
+            type Message = ();
+
+            fn started(&mut self, context: &mut Self::Context) {
+                context
+                    .subscribe_and_receive_latest::<Self::Message>()
+                    .expect("can receive last cached value");
+            }
+
+            fn handle(
+                &mut self,
+                context: &mut Self::Context,
+                _: Self::Message,
+            ) -> Result<(), Self::Error> {
+                println!("Event received!");
+                context.system_handle.shutdown().unwrap();
+                Ok(())
+            }
+
+            fn name() -> &'static str {
+                "recipient"
+            }
+        }
+
+        let mut system = System::new("last cached event");
+        system.publish(()).expect("can publish event");
+
+        // This test will block indefinitely if the event isn't delivered.
+        system
+            .prepare(Subscriber)
+            .with_addr(Addr::with_capacity(1))
+            .run_and_block()
+            .expect("actor finishes successfully");
     }
 }
