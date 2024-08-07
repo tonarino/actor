@@ -225,13 +225,34 @@ enum SystemState {
 }
 
 /// A marker trait for types which participate in the publish-subscribe system
-/// of the actor framework.
-pub trait Event: Clone + std::any::Any + 'static + Send + Sync {}
+/// of the actor framework. If it makes sense to cache your event and use it with
+/// [`Context::subscribe_and_receive_latest()`], then mark your type with [`CacheableEvent`]
+/// instead.
+pub trait Event: Clone + std::any::Any {
+    /// Internal method for the actor framework: don't implement this downstream. Make your type
+    /// implement [`CacheableEvent`] instead of [`Event`] if it makes sense to cache it.
+    #[doc(hidden)]
+    fn cache(&self) -> Option<Box<dyn std::any::Any + Send + Sync>> {
+        None
+    }
+}
+
+/// A marker trait for types which participate in the publish-subscribe system
+/// of the actor framework and can be cached. [`Context::subscribe_and_receive_latest()`]  will be
+/// available for them in addition to [`Context::subscribe()`]. Blanket implementation of [`Event`]
+/// is provided for all types that implement [`CacheableEvent`].
+pub trait CacheableEvent: Clone + std::any::Any + Send + Sync {}
+
+impl<T: CacheableEvent> Event for T {
+    fn cache(&self) -> Option<Box<dyn std::any::Any + Send + Sync>> {
+        Some(Box::new(self.clone()))
+    }
+}
 
 #[derive(Default)]
 struct EventSubscribers {
     events: HashMap<TypeId, Vec<EventCallback>>,
-    /// We cache the last published value of each event type.
+    /// We cache the last published value of [`CacheableEvent`]s.
     /// Subscribers can request to receive it upon subscription.
     last_value_cache: dashmap::DashMap<TypeId, Box<dyn std::any::Any + Send + Sync>>,
 }
@@ -300,7 +321,7 @@ impl<M> Context<M> {
     ///
     /// Note that subscribing twice to the same event would result in duplicate events -- no
     /// de-duplication of subscriptions is performed.
-    pub fn subscribe_and_receive_latest<E: Event + Into<M>>(&self) -> Result<(), SendError>
+    pub fn subscribe_and_receive_latest<E: CacheableEvent + Into<M>>(&self) -> Result<(), SendError>
     where
         M: 'static,
     {
@@ -746,7 +767,7 @@ impl SystemHandle {
 
     /// Subscribe given `recipient` to events of type `E` and send the last cached event to it.
     /// See [`Context::subscribe_and_receive_latest()`].
-    pub fn subscribe_and_receive_latest<M: 'static, E: Event + Into<M>>(
+    pub fn subscribe_and_receive_latest<M: 'static, E: CacheableEvent + Into<M>>(
         &self,
         recipient: Recipient<M>,
     ) -> Result<(), SendError> {
@@ -777,8 +798,8 @@ impl SystemHandle {
 
     /// Publish an event. All actors that have previously subscribed to the type will receive it.
     ///
-    /// The event will be also cached. Actors that will subscribe to the type in future may choose
-    /// to receive the last cached event upon subscription.
+    /// The event will be cached if it implements [`CacheableEvent`]. Actors that will subscribe to
+    /// such an event type in future may choose to receive the last cached event upon subscription.
     ///
     /// When sending to some subscriber fails, others are still tried and vec of errors is returned.
     /// For direct, non-[`Clone`] or high-throughput messages please use [`Addr`] or [`Recipient`].
@@ -786,7 +807,9 @@ impl SystemHandle {
         let event_subscribers = self.event_subscribers.read();
         let type_id = TypeId::of::<E>();
 
-        event_subscribers.last_value_cache.insert(type_id, Box::new(event.clone()));
+        if let Some(cached) = event.cache() {
+            event_subscribers.last_value_cache.insert(type_id, cached);
+        }
 
         if let Some(subs) = event_subscribers.events.get(&type_id) {
             let errors: Vec<SendError> = subs
@@ -1349,7 +1372,7 @@ mod tests {
 
     #[test]
     fn last_cached_event() {
-        impl Event for () {}
+        impl CacheableEvent for () {}
 
         struct Subscriber;
         impl Actor for Subscriber {
