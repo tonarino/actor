@@ -62,7 +62,6 @@ use log::*;
 use parking_lot::{Mutex, RwLock};
 use std::{
     any::TypeId,
-    collections::HashMap,
     fmt,
     ops::Deref,
     sync::Arc,
@@ -251,7 +250,7 @@ impl<T: CacheableEvent> Event for T {
 
 #[derive(Default)]
 struct EventSubscribers {
-    events: HashMap<TypeId, Vec<EventCallback>>,
+    events: dashmap::DashMap<TypeId, Vec<EventCallback>>,
     /// We cache the last published value of [`CacheableEvent`]s.
     /// Subscribers can request to receive it upon subscription.
     last_value_cache: dashmap::DashMap<TypeId, Box<dyn std::any::Any + Send + Sync>>,
@@ -266,7 +265,7 @@ pub struct SystemHandle {
     system_state: Arc<RwLock<SystemState>>,
     callbacks: Arc<SystemCallbacks>,
 
-    event_subscribers: Arc<RwLock<EventSubscribers>>,
+    event_subscribers: Arc<EventSubscribers>,
 }
 
 /// An execution context for a specific actor. Specifically, this is useful for managing
@@ -751,9 +750,7 @@ impl SystemHandle {
 
     /// Subscribe given `recipient` to events of type `E`. See [`Context::subscribe()`].
     pub fn subscribe_recipient<M: 'static, E: Event + Into<M>>(&self, recipient: Recipient<M>) {
-        let mut event_subscribers = self.event_subscribers.write();
-
-        let subs = event_subscribers.events.entry(TypeId::of::<E>()).or_default();
+        let mut subs = self.event_subscribers.events.entry(TypeId::of::<E>()).or_default();
 
         subs.push(Box::new(move |e| {
             if let Some(event) = e.downcast_ref::<E>() {
@@ -771,27 +768,17 @@ impl SystemHandle {
         &self,
         recipient: Recipient<M>,
     ) -> Result<(), SendError> {
-        let mut event_subscribers = self.event_subscribers.write();
+        // Subscribe first. We assume it is better to receive an event twice rather than not at all.
+        self.subscribe_recipient::<M, E>(recipient.clone());
 
         // Send the last cached value if there is one.
-        if let Some(last_cached_value) = event_subscribers.last_value_cache.get(&TypeId::of::<E>())
+        if let Some(last_cached_value) =
+            self.event_subscribers.last_value_cache.get(&TypeId::of::<E>())
         {
             if let Some(msg) = last_cached_value.downcast_ref::<E>() {
                 recipient.send(msg.clone().into())?;
             }
         }
-
-        // Duplicate the contents of Self::subscribe_recipient() to reuse the same WriteGuard
-        // for better performance.
-        let subs = event_subscribers.events.entry(TypeId::of::<E>()).or_default();
-        subs.push(Box::new(move |e| {
-            if let Some(event) = e.downcast_ref::<E>() {
-                let msg = event.clone();
-                recipient.send(msg.into())?;
-            }
-
-            Ok(())
-        }));
 
         Ok(())
     }
@@ -804,14 +791,13 @@ impl SystemHandle {
     /// When sending to some subscriber fails, others are still tried and vec of errors is returned.
     /// For direct, non-[`Clone`] or high-throughput messages please use [`Addr`] or [`Recipient`].
     pub fn publish<E: Event>(&self, event: E) -> Result<(), PublishError> {
-        let event_subscribers = self.event_subscribers.read();
         let type_id = TypeId::of::<E>();
 
         if let Some(cached) = event.cache() {
-            event_subscribers.last_value_cache.insert(type_id, cached);
+            self.event_subscribers.last_value_cache.insert(type_id, cached);
         }
 
-        if let Some(subs) = event_subscribers.events.get(&type_id) {
+        if let Some(subs) = self.event_subscribers.events.get(&type_id) {
             let errors: Vec<SendError> = subs
                 .iter()
                 .filter_map(|subscriber_callback| subscriber_callback(&event).err())
