@@ -233,7 +233,7 @@ struct EventSubscribers {
     events: HashMap<TypeId, Vec<EventCallback>>,
     /// We cache the last published value of each event type.
     /// Subscribers can request to receive it upon subscription.
-    last_value_cache: HashMap<TypeId, Box<dyn std::any::Any + Send + Sync>>,
+    last_value_cache: dashmap::DashMap<TypeId, Box<dyn std::any::Any + Send + Sync>>,
 }
 
 /// Contains the "metadata" of the system, including information about the registry
@@ -783,7 +783,7 @@ impl SystemHandle {
     /// When sending to some subscriber fails, others are still tried and vec of errors is returned.
     /// For direct, non-[`Clone`] or high-throughput messages please use [`Addr`] or [`Recipient`].
     pub fn publish<E: Event>(&self, event: E) -> Result<(), PublishError> {
-        let mut event_subscribers = self.event_subscribers.write();
+        let event_subscribers = self.event_subscribers.read();
         let type_id = TypeId::of::<E>();
 
         event_subscribers.last_value_cache.insert(type_id, Box::new(event.clone()));
