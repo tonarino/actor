@@ -257,6 +257,19 @@ struct EventSubscribers {
     last_value_cache: HashMap<TypeId, Box<dyn std::any::Any + Send + Sync>>,
 }
 
+impl EventSubscribers {
+    fn subscribe_recipient<M: 'static, E: Event + Into<M>>(&mut self, recipient: Recipient<M>) {
+        let subs = self.events.entry(TypeId::of::<E>()).or_default();
+        subs.push(Box::new(move |e| {
+            if let Some(event) = e.downcast_ref::<E>() {
+                let msg = event.clone();
+                recipient.send(msg.into())?;
+            }
+            Ok(())
+        }));
+    }
+}
+
 /// Contains the "metadata" of the system, including information about the registry
 /// of actors currently existing within the system.
 #[derive(Default, Clone)]
@@ -752,17 +765,7 @@ impl SystemHandle {
     /// Subscribe given `recipient` to events of type `E`. See [`Context::subscribe()`].
     pub fn subscribe_recipient<M: 'static, E: Event + Into<M>>(&self, recipient: Recipient<M>) {
         let mut event_subscribers = self.event_subscribers.write();
-
-        let subs = event_subscribers.events.entry(TypeId::of::<E>()).or_default();
-
-        subs.push(Box::new(move |e| {
-            if let Some(event) = e.downcast_ref::<E>() {
-                let msg = event.clone();
-                recipient.send(msg.into())?;
-            }
-
-            Ok(())
-        }));
+        event_subscribers.subscribe_recipient::<M, E>(recipient);
     }
 
     /// Subscribe given `recipient` to events of type `E` and send the last cached event to it.
@@ -781,18 +784,7 @@ impl SystemHandle {
             }
         }
 
-        // Duplicate the contents of Self::subscribe_recipient() to reuse the same WriteGuard
-        // for better performance.
-        let subs = event_subscribers.events.entry(TypeId::of::<E>()).or_default();
-        subs.push(Box::new(move |e| {
-            if let Some(event) = e.downcast_ref::<E>() {
-                let msg = event.clone();
-                recipient.send(msg.into())?;
-            }
-
-            Ok(())
-        }));
-
+        event_subscribers.subscribe_recipient::<M, E>(recipient);
         Ok(())
     }
 
