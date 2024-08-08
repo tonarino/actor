@@ -15,7 +15,6 @@ keywords = ["actor", "threads"]
 flume = { version = "0.10", default-features = false, features = ["select"] }
 log = "0.4"
 parking_lot = "0.12"
-dashmap = "6"
 
 [dev-dependencies]
 anyhow = "1"

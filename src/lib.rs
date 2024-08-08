@@ -59,9 +59,10 @@
 
 use flume::{select::SelectError, Receiver, RecvError, Selector, Sender};
 use log::*;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use std::{
     any::TypeId,
+    collections::HashMap,
     fmt,
     ops::Deref,
     sync::Arc,
@@ -250,10 +251,10 @@ impl<T: CacheableEvent> Event for T {
 
 #[derive(Default)]
 struct EventSubscribers {
-    events: dashmap::DashMap<TypeId, Vec<EventCallback>>,
+    events: HashMap<TypeId, Vec<EventCallback>>,
     /// We cache the last published value of [`CacheableEvent`]s.
     /// Subscribers can request to receive it upon subscription.
-    last_value_cache: dashmap::DashMap<TypeId, Box<dyn std::any::Any + Send + Sync>>,
+    last_value_cache: HashMap<TypeId, Box<dyn std::any::Any + Send + Sync>>,
 }
 
 /// Contains the "metadata" of the system, including information about the registry
@@ -265,7 +266,7 @@ pub struct SystemHandle {
     system_state: Arc<RwLock<SystemState>>,
     callbacks: Arc<SystemCallbacks>,
 
-    event_subscribers: Arc<EventSubscribers>,
+    event_subscribers: Arc<RwLock<EventSubscribers>>,
 }
 
 /// An execution context for a specific actor. Specifically, this is useful for managing
@@ -750,7 +751,9 @@ impl SystemHandle {
 
     /// Subscribe given `recipient` to events of type `E`. See [`Context::subscribe()`].
     pub fn subscribe_recipient<M: 'static, E: Event + Into<M>>(&self, recipient: Recipient<M>) {
-        let mut subs = self.event_subscribers.events.entry(TypeId::of::<E>()).or_default();
+        let mut event_subscribers = self.event_subscribers.write();
+
+        let subs = event_subscribers.events.entry(TypeId::of::<E>()).or_default();
 
         subs.push(Box::new(move |e| {
             if let Some(event) = e.downcast_ref::<E>() {
@@ -768,17 +771,27 @@ impl SystemHandle {
         &self,
         recipient: Recipient<M>,
     ) -> Result<(), SendError> {
-        // Subscribe first. We assume it is better to receive an event twice rather than not at all.
-        self.subscribe_recipient::<M, E>(recipient.clone());
+        let mut event_subscribers = self.event_subscribers.write();
 
         // Send the last cached value if there is one.
-        if let Some(last_cached_value) =
-            self.event_subscribers.last_value_cache.get(&TypeId::of::<E>())
+        if let Some(last_cached_value) = event_subscribers.last_value_cache.get(&TypeId::of::<E>())
         {
             if let Some(msg) = last_cached_value.downcast_ref::<E>() {
                 recipient.send(msg.clone().into())?;
             }
         }
+
+        // Duplicate the contents of Self::subscribe_recipient() to reuse the same WriteGuard
+        // for better performance.
+        let subs = event_subscribers.events.entry(TypeId::of::<E>()).or_default();
+        subs.push(Box::new(move |e| {
+            if let Some(event) = e.downcast_ref::<E>() {
+                let msg = event.clone();
+                recipient.send(msg.into())?;
+            }
+
+            Ok(())
+        }));
 
         Ok(())
     }
@@ -793,11 +806,23 @@ impl SystemHandle {
     pub fn publish<E: Event>(&self, event: E) -> Result<(), PublishError> {
         let type_id = TypeId::of::<E>();
 
-        if let Some(cached) = event.cache() {
-            self.event_subscribers.last_value_cache.insert(type_id, cached);
-        }
+        let event_subscribers = if let Some(cached) = event.cache() {
+            // This write lock is a possible contention point if many actors publish events at high
+            // rate at the same time. If that ever becomes a bottleneck, we could transition to
+            // a hash map with finer locking, like dashmap. Like in anx; intermediate version of #87.
+            let mut event_subscribers = self.event_subscribers.write();
+            event_subscribers.last_value_cache.insert(type_id, cached);
 
-        if let Some(subs) = self.event_subscribers.events.get(&type_id) {
+            // Release the write lock early so that the send loop is run only with a read lock,
+            // preventing contention. We make use of the guarantee that no other write lock can ba
+            // acquired here, thus preventing a race condition between
+            // `subscribe_and_receive_latest()` and `publish()`.
+            RwLockWriteGuard::downgrade(event_subscribers)
+        } else {
+            self.event_subscribers.read()
+        };
+
+        if let Some(subs) = event_subscribers.events.get(&type_id) {
             let errors: Vec<SendError> = subs
                 .iter()
                 .filter_map(|subscriber_callback| subscriber_callback(&event).err())
