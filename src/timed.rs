@@ -16,7 +16,7 @@
 //!
 //! See `delay_actor.rs` example for usage.
 
-use crate::{Actor, CacheableEvent, Context, Event, Priority, Recipient, SendError, SystemHandle};
+use crate::{Actor, Context, Event, Priority, Recipient, SendError, SystemHandle};
 use std::{
     cmp::Ordering,
     collections::BinaryHeap,
@@ -106,7 +106,7 @@ impl<M> TimedContext<M> {
     /// Subscribe current actor to event of type `E` and send the last cached event to it.
     /// Events will be delivered as instant messages.
     /// See [`crate::Context::subscribe()`].
-    pub fn subscribe_and_receive_latest<E: CacheableEvent + Into<M>>(&self) -> Result<(), SendError>
+    pub fn subscribe_and_receive_latest<E: Event + Into<M>>(&self) -> Result<(), SendError>
     where
         M: 'static,
     {

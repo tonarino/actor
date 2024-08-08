@@ -4,7 +4,7 @@ use std::{
     hint::black_box,
     time::{Duration, Instant},
 };
-use tonari_actor::{Actor, CacheableEvent, Context, Event, Recipient, System};
+use tonari_actor::{Actor, Context, Event, Recipient, System};
 
 const PAYLOAD: &str = "This is the payload that will be used in the test event. It should be of \
                        reasonable size for a representative event, which is hard to determine. \
@@ -12,11 +12,8 @@ const PAYLOAD: &str = "This is the payload that will be used in the test event. 
 
 #[derive(Debug, Clone)]
 struct StringEvent(String);
-impl Event for StringEvent {}
 
-#[derive(Debug, Clone)]
-struct CacheableStringEvent(String);
-impl CacheableEvent for CacheableStringEvent {}
+impl Event for StringEvent {}
 
 enum PublisherMessage {
     SubscriberStarted,
@@ -24,14 +21,13 @@ enum PublisherMessage {
 }
 
 #[derive(Clone)]
-struct PublisherActor<E> {
-    event: E,
+struct PublisherActor {
     subscriber_count: usize,
     iterations: u64,
     result_sender: flume::Sender<Duration>,
 }
 
-impl<E: Event> Actor for PublisherActor<E> {
+impl Actor for PublisherActor {
     type Context = Context<Self::Message>;
     type Error = Error;
     type Message = PublisherMessage;
@@ -56,7 +52,7 @@ impl<E: Event> Actor for PublisherActor<E> {
             PublisherMessage::PublishEvents => {
                 let start = Instant::now();
                 for _i in 0..self.iterations {
-                    context.system_handle.publish(self.event.clone())?;
+                    context.system_handle.publish(StringEvent(PAYLOAD.to_string()))?;
                 }
                 let elapsed = start.elapsed();
 
@@ -81,7 +77,7 @@ impl SubscriberActor {
 impl Actor for SubscriberActor {
     type Context = Context<Self::Message>;
     type Error = Error;
-    type Message = EitherEvent;
+    type Message = StringEvent;
 
     fn name() -> &'static str {
         "SubscriberActor"
@@ -89,7 +85,6 @@ impl Actor for SubscriberActor {
 
     fn started(&mut self, context: &mut Self::Context) {
         context.subscribe::<StringEvent>();
-        context.subscribe::<CacheableStringEvent>();
         for publisher_addr in self.publisher_addrs.iter() {
             publisher_addr.send(PublisherMessage::SubscriberStarted).unwrap();
         }
@@ -101,43 +96,12 @@ impl Actor for SubscriberActor {
         message: Self::Message,
     ) -> Result<(), Self::Error> {
         // This black_box has a nice side effect that it silences the 'field is never read' warning.
-        black_box(message.payload());
+        black_box(message.0);
         Ok(())
     }
 }
 
-enum EitherEvent {
-    Base(StringEvent),
-    Cacheable(CacheableStringEvent),
-}
-
-impl EitherEvent {
-    fn payload(self) -> String {
-        match self {
-            EitherEvent::Base(StringEvent(payload))
-            | EitherEvent::Cacheable(CacheableStringEvent(payload)) => payload,
-        }
-    }
-}
-
-impl From<StringEvent> for EitherEvent {
-    fn from(value: StringEvent) -> Self {
-        Self::Base(value)
-    }
-}
-
-impl From<CacheableStringEvent> for EitherEvent {
-    fn from(value: CacheableStringEvent) -> Self {
-        Self::Cacheable(value)
-    }
-}
-
-fn run_pubsub_system<E: Event + Send>(
-    event: E,
-    publishers: usize,
-    subscribers: usize,
-    iterations: u64,
-) -> Duration {
+fn run_pubsub_system(publishers: usize, subscribers: usize, iterations: u64) -> Duration {
     let mut system = System::new("pub sub bench");
     let (result_sender, result_receiver) = flume::bounded(publishers);
 
@@ -145,7 +109,6 @@ fn run_pubsub_system<E: Event + Send>(
     let per_publisher_iterations = iterations / publishers as u64;
     let publisher_actors = vec![
         PublisherActor {
-            event,
             subscriber_count: subscribers,
             iterations: per_publisher_iterations,
             result_sender
@@ -187,33 +150,11 @@ fn criterion_benchmark(c: &mut Criterion) {
                 format!("{publishers} publishers {subscribers} subscribers"),
                 |b| {
                     b.iter_custom(|iterations| {
-                        run_pubsub_system(
-                            StringEvent(PAYLOAD.to_string()),
-                            publishers,
-                            subscribers,
-                            iterations,
-                        )
+                        run_pubsub_system(publishers, subscribers, iterations)
                     })
                 },
             );
         }
-    }
-
-    let subscribers = 10;
-    for publishers in [1, 2] {
-        group.bench_function(
-            format!("{publishers} publishers {subscribers} subscribers (cacheable event type)"),
-            |b| {
-                b.iter_custom(|iterations| {
-                    run_pubsub_system(
-                        CacheableStringEvent(PAYLOAD.to_string()),
-                        publishers,
-                        subscribers,
-                        iterations,
-                    )
-                })
-            },
-        );
     }
 }
 
