@@ -1,4 +1,5 @@
-use_small_heuristics="Max"
+format_strings = true
+use_small_heuristics = "Max"
 imports_granularity = "Crate"
 match_block_trailing_comma = true
 reorder_impl_items = true

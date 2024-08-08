@@ -322,7 +322,8 @@ impl From<usize> for Capacity {
 /// A builder for configuring [`Actor`] spawning.
 /// You can specify your own [`Addr`] for the Actor, or let the system create
 /// a new address with either provided or default capacity.
-#[must_use = "You must call .with_addr(), .with_capacity(), or .with_default_capacity() to configure this builder"]
+#[must_use = "You must call .with_addr(), .with_capacity(), or .with_default_capacity() to \
+              configure this builder"]
 pub struct SpawnBuilderWithoutAddress<'a, A: Actor, F: FnOnce() -> A> {
     system: &'a mut System,
     factory: F,
@@ -631,7 +632,11 @@ impl SystemHandle {
 
             match *system_state_lock {
                 SystemState::ShuttingDown | SystemState::Stopped => {
-                    debug!("Thread [{}] called system.shutdown() but the system is already shutting down or stopped", current_thread_name);
+                    debug!(
+                        "Thread [{}] called system.shutdown() but the system is already shutting \
+                         down or stopped",
+                        current_thread_name
+                    );
                     return Ok(());
                 },
                 SystemState::Running => {

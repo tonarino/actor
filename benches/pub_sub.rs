@@ -1,10 +1,17 @@
 use anyhow::Error;
 use criterion::{criterion_group, criterion_main, Criterion};
-use std::time::{Duration, Instant};
+use std::{
+    hint::black_box,
+    time::{Duration, Instant},
+};
 use tonari_actor::{Actor, Context, Event, Recipient, System};
 
+const PAYLOAD: &str = "This is the payload that will be used in the test event. It should be of \
+                       reasonable size for a representative event, which is hard to determine. \
+                       But let's say 3 lines of text is fine for now.";
+
 #[derive(Debug, Clone)]
-struct StringEvent;
+struct StringEvent(String);
 
 impl Event for StringEvent {}
 
@@ -45,7 +52,7 @@ impl Actor for PublisherActor {
             PublisherMessage::PublishEvents => {
                 let start = Instant::now();
                 for _i in 0..self.iterations {
-                    context.system_handle.publish(StringEvent)?;
+                    context.system_handle.publish(StringEvent(PAYLOAD.to_string()))?;
                 }
                 let elapsed = start.elapsed();
 
@@ -86,8 +93,10 @@ impl Actor for SubscriberActor {
     fn handle(
         &mut self,
         _context: &mut Self::Context,
-        _message: Self::Message,
+        message: Self::Message,
     ) -> Result<(), Self::Error> {
+        // This black_box has a nice side effect that it silences the 'field is never read' warning.
+        black_box(message.0);
         Ok(())
     }
 }
