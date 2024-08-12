@@ -8,7 +8,7 @@ struct ChainLink {
 
 impl Actor for ChainLink {
     type Context = Context<Self::Message>;
-    type Error = ();
+    type Error = String;
     type Message = u64;
 
     fn name() -> &'static str {

@@ -15,14 +15,14 @@
 //! struct TestActor {}
 //! impl Actor for TestActor {
 //!     type Context = Context<Self::Message>;
-//!     type Error = ();
+//!     type Error = String;
 //!     type Message = usize;
 //!
 //!     fn name() -> &'static str {
 //!         "TestActor"
 //!     }
 //!
-//!     fn handle(&mut self, _context: &mut Self::Context, message: Self::Message) -> Result<(), ()> {
+//!     fn handle(&mut self, _context: &mut Self::Context, message: Self::Message) -> Result<(), String> {
 //!         println!("message: {}", message);
 //!
 //!         Ok(())
@@ -608,33 +608,50 @@ impl System {
                 },
                 Received::Message(msg) => {
                     trace!("[{}] message received by {}", system_handle.name, A::name());
-                    if let Err(err) = actor.handle(context, msg) {
-                        error!(
-                            "[{}] {} handle error: {:?}, shutting down.",
-                            system_handle.name,
-                            A::name(),
-                            err
-                        );
-                        let _ = system_handle.shutdown();
-
+                    if let Err(error) = actor.handle(context, msg) {
+                        Self::report_error_shutdown(system_handle, A::name(), "handle", error);
                         return;
                     }
                 },
                 Received::Timeout => {
                     let deadline = context.receive_deadline.take().expect("implied by timeout");
-                    if let Err(err) = actor.deadline_passed(context, deadline) {
-                        error!(
-                            "[{}] {} deadline_passed error: {:?}, shutting down.",
-                            system_handle.name,
+                    if let Err(error) = actor.deadline_passed(context, deadline) {
+                        Self::report_error_shutdown(
+                            system_handle,
                             A::name(),
-                            err
+                            "deadline_passed",
+                            error,
                         );
-                        let _ = system_handle.shutdown();
-
                         return;
                     }
                 },
             }
+        }
+    }
+
+    fn report_error_shutdown(
+        system_handle: &SystemHandle,
+        actor_name: &str,
+        method_name: &str,
+        error: impl std::fmt::Display,
+    ) {
+        let is_running = match *system_handle.system_state.read() {
+            SystemState::Running => true,
+            SystemState::ShuttingDown | SystemState::Stopped => false,
+        };
+
+        let system_name = &system_handle.name;
+
+        // Note that the system may have transitioned from running to stopping (but not the other
+        // way around) in the mean time. Slightly imprecise log and an extra no-op call is fine.
+        if is_running {
+            error!("[{system_name}] {actor_name} {method_name} error: {error:#}, shutting down.");
+            let _ = system_handle.shutdown();
+        } else {
+            warn!(
+                "[{system_name}] {actor_name} {method_name} error {error:#} while shutting down, \
+                 ignoring."
+            );
         }
     }
 }
@@ -658,7 +675,6 @@ impl SystemHandle {
     pub fn shutdown(&self) -> Result<(), ActorError> {
         let current_thread = thread::current();
         let current_thread_name = current_thread.name().unwrap_or("Unknown thread id");
-        info!("Thread [{}] shutting down the actor system", current_thread_name);
 
         // Use an inner scope to prevent holding the lock for the duration of shutdown
         {
@@ -674,16 +690,14 @@ impl SystemHandle {
                     return Ok(());
                 },
                 SystemState::Running => {
-                    debug!(
-                        "Thread [{}] setting the system_state value to ShuttingDown",
-                        current_thread_name
+                    info!(
+                        "Thread [{}] shutting down the actor system {}",
+                        current_thread_name, self.name
                     );
                     *system_state_lock = SystemState::ShuttingDown;
                 },
             }
         }
-
-        info!("[{}] system shutting down.", self.name);
 
         if let Some(callback) = self.callbacks.preshutdown.as_ref() {
             info!("[{}] calling pre-shutdown callback.", self.name);
@@ -845,7 +859,7 @@ pub trait Actor {
     // 'static required to create trait object in Addr, https://stackoverflow.com/q/29740488/4345715
     type Message: Send + 'static;
     /// The type to return on error in the handle method.
-    type Error: std::fmt::Debug;
+    type Error: std::fmt::Display;
     /// What kind of context this actor accepts. Usually [`Context<Self::Message>`].
     type Context;
 
@@ -888,13 +902,13 @@ pub trait Actor {
     /// # struct TickingActor;
     /// impl Actor for TickingActor {
     /// #    type Context = Context<Self::Message>;
-    /// #    type Error = ();
+    /// #    type Error = String;
     /// #    type Message = ();
     /// #    fn name() -> &'static str { "TickingActor" }
-    /// #    fn handle(&mut self, _: &mut Self::Context, _: ()) -> Result<(), ()> { Ok(()) }
+    /// #    fn handle(&mut self, _: &mut Self::Context, _: ()) -> Result<(), String> { Ok(()) }
     ///     // ...
     ///
-    ///     fn deadline_passed(&mut self, context: &mut Self::Context, deadline: Instant) -> Result<(), ()> {
+    ///     fn deadline_passed(&mut self, context: &mut Self::Context, deadline: Instant) -> Result<(), String> {
     ///         // do_periodic_housekeeping();
     ///
     ///         // A: Schedule one second from now (even if delayed); drifting tick.
@@ -1106,14 +1120,14 @@ mod tests {
     struct TestActor;
     impl Actor for TestActor {
         type Context = Context<Self::Message>;
-        type Error = ();
+        type Error = String;
         type Message = usize;
 
         fn name() -> &'static str {
             "TestActor"
         }
 
-        fn handle(&mut self, _: &mut Self::Context, message: usize) -> Result<(), ()> {
+        fn handle(&mut self, _: &mut Self::Context, message: usize) -> Result<(), String> {
             println!("message: {}", message);
 
             Ok(())
@@ -1167,14 +1181,14 @@ mod tests {
         }
         impl Actor for LocalActor {
             type Context = Context<Self::Message>;
-            type Error = ();
+            type Error = String;
             type Message = ();
 
             fn name() -> &'static str {
                 "LocalActor"
             }
 
-            fn handle(&mut self, _: &mut Self::Context, _: ()) -> Result<(), ()> {
+            fn handle(&mut self, _: &mut Self::Context, _: ()) -> Result<(), String> {
                 Ok(())
             }
 
@@ -1204,14 +1218,18 @@ mod tests {
 
         impl Actor for TimeoutActor {
             type Context = Context<Self::Message>;
-            type Error = ();
+            type Error = String;
             type Message = Option<Instant>;
 
             fn name() -> &'static str {
                 "TimeoutActor"
             }
 
-            fn handle(&mut self, ctx: &mut Self::Context, msg: Self::Message) -> Result<(), ()> {
+            fn handle(
+                &mut self,
+                ctx: &mut Self::Context,
+                msg: Self::Message,
+            ) -> Result<(), String> {
                 self.handle_count.fetch_add(1, Ordering::SeqCst);
                 if msg.is_some() {
                     ctx.receive_deadline = msg;
@@ -1219,7 +1237,7 @@ mod tests {
                 Ok(())
             }
 
-            fn deadline_passed(&mut self, _: &mut Self::Context, _: Instant) -> Result<(), ()> {
+            fn deadline_passed(&mut self, _: &mut Self::Context, _: Instant) -> Result<(), String> {
                 self.timeout_count.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             }
@@ -1299,7 +1317,7 @@ mod tests {
 
         impl Actor for PriorityActor {
             type Context = Context<Self::Message>;
-            type Error = ();
+            type Error = String;
             type Message = usize;
 
             fn handle(
@@ -1356,7 +1374,7 @@ mod tests {
         struct Subscriber;
         impl Actor for Subscriber {
             type Context = Context<Self::Message>;
-            type Error = ();
+            type Error = String;
             type Message = ();
 
             fn started(&mut self, context: &mut Self::Context) {
