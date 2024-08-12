@@ -1,4 +1,4 @@
-use anyhow::Error;
+use anyhow::{Error, Result};
 use env_logger::Env;
 use std::time::{Duration, Instant};
 use tonari_actor::{Actor, Context, System};
@@ -27,24 +27,17 @@ impl Actor for TimerExampleActor {
         "TimerExampleActor"
     }
 
-    fn started(&mut self, context: &mut Self::Context) {
+    fn started(&mut self, context: &mut Self::Context) -> Result<()> {
         context.set_deadline(Some(self.started_at + Duration::from_millis(1500)));
+        Ok(())
     }
 
-    fn handle(
-        &mut self,
-        _context: &mut Self::Context,
-        message: Self::Message,
-    ) -> Result<(), Self::Error> {
+    fn handle(&mut self, _context: &mut Self::Context, message: Self::Message) -> Result<()> {
         println!("Got a message: {:?} at {:?}", message, self.started_at.elapsed());
         Ok(())
     }
 
-    fn deadline_passed(
-        &mut self,
-        context: &mut Self::Context,
-        deadline: Instant,
-    ) -> Result<(), Error> {
+    fn deadline_passed(&mut self, context: &mut Self::Context, deadline: Instant) -> Result<()> {
         context.myself.send(TimerMessage::Periodic)?;
         context.set_deadline(Some(deadline + Duration::from_secs(1)));
         Ok(())

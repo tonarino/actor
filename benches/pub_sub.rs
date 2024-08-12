@@ -1,4 +1,4 @@
-use anyhow::Error;
+use anyhow::{Error, Result};
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::{
     hint::black_box,
@@ -36,11 +36,7 @@ impl Actor for PublisherActor {
         "PublisherActor"
     }
 
-    fn handle(
-        &mut self,
-        context: &mut Self::Context,
-        message: Self::Message,
-    ) -> Result<(), Self::Error> {
+    fn handle(&mut self, context: &mut Self::Context, message: Self::Message) -> Result<()> {
         match message {
             PublisherMessage::SubscriberStarted => {
                 self.subscriber_count = self.subscriber_count.checked_sub(1).unwrap();
@@ -83,18 +79,16 @@ impl Actor for SubscriberActor {
         "SubscriberActor"
     }
 
-    fn started(&mut self, context: &mut Self::Context) {
+    fn started(&mut self, context: &mut Self::Context) -> Result<()> {
         context.subscribe::<StringEvent>();
         for publisher_addr in self.publisher_addrs.iter() {
-            publisher_addr.send(PublisherMessage::SubscriberStarted).unwrap();
+            publisher_addr.send(PublisherMessage::SubscriberStarted)?;
         }
+
+        Ok(())
     }
 
-    fn handle(
-        &mut self,
-        _context: &mut Self::Context,
-        message: Self::Message,
-    ) -> Result<(), Self::Error> {
+    fn handle(&mut self, _context: &mut Self::Context, message: Self::Message) -> Result<()> {
         // This black_box has a nice side effect that it silences the 'field is never read' warning.
         black_box(message.0);
         Ok(())

@@ -216,11 +216,11 @@ impl<M: Send + 'static, A: Actor<Context = TimedContext<M>, Message = M>> Actor 
         }
     }
 
-    fn started(&mut self, context: &mut Self::Context) {
+    fn started(&mut self, context: &mut Self::Context) -> Result<(), Self::Error> {
         self.inner.started(&mut TimedContext::from_context(context))
     }
 
-    fn stopped(&mut self, context: &mut Self::Context) {
+    fn stopped(&mut self, context: &mut Self::Context) -> Result<(), Self::Error> {
         self.inner.stopped(&mut TimedContext::from_context(context))
     }
 
@@ -314,7 +314,7 @@ mod tests {
             Ok(())
         }
 
-        fn started(&mut self, context: &mut Self::Context) {
+        fn started(&mut self, context: &mut Self::Context) -> Result<(), String> {
             context
                 .myself
                 .send_recurring(
@@ -322,7 +322,7 @@ mod tests {
                     Instant::now() + Duration::from_millis(50),
                     Duration::from_millis(100),
                 )
-                .unwrap()
+                .map_err(|e| e.to_string())
         }
     }
 

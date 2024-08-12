@@ -1,4 +1,4 @@
-use anyhow::Error;
+use anyhow::{Error, Result};
 use env_logger::Env;
 use log::debug;
 use std::time::{Duration, Instant};
@@ -34,12 +34,12 @@ impl<A: Actor> Actor for LoggingAdapter<A> {
         A::priority(message)
     }
 
-    fn started(&mut self, context: &mut Self::Context) {
+    fn started(&mut self, context: &mut Self::Context) -> Result<(), Self::Error> {
         debug!("LoggingAdapter: started()");
         self.inner.started(context)
     }
 
-    fn stopped(&mut self, context: &mut Self::Context) {
+    fn stopped(&mut self, context: &mut Self::Context) -> Result<(), Self::Error> {
         debug!("LoggingAdapter: stopped()");
         self.inner.stopped(context)
     }
@@ -61,7 +61,7 @@ impl Actor for TestActor {
     type Error = Error;
     type Message = String;
 
-    fn handle(&mut self, context: &mut Self::Context, message: String) -> Result<(), Error> {
+    fn handle(&mut self, context: &mut Self::Context, message: String) -> Result<()> {
         println!("Got a message: {}. Shuting down.", message);
         context.system_handle.shutdown().map_err(Error::from)
     }
@@ -70,20 +70,17 @@ impl Actor for TestActor {
         "TestActor"
     }
 
-    fn started(&mut self, context: &mut Self::Context) {
-        context.set_timeout(Some(Duration::from_millis(100)))
+    fn started(&mut self, context: &mut Self::Context) -> Result<()> {
+        context.set_timeout(Some(Duration::from_millis(100)));
+        Ok(())
     }
 
-    fn deadline_passed(
-        &mut self,
-        context: &mut Self::Context,
-        deadline: Instant,
-    ) -> Result<(), Error> {
+    fn deadline_passed(&mut self, context: &mut Self::Context, deadline: Instant) -> Result<()> {
         context.myself.send(format!("deadline was {:?}", deadline)).map_err(Error::from)
     }
 }
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
 
     let mut system = System::new("Actor Wrapping Example");
