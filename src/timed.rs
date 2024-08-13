@@ -102,6 +102,16 @@ impl<M> TimedContext<M> {
         // The recipient() call allows conversion from M to TimedMessage<M>.
         self.system_handle.subscribe_recipient::<M, E>(self.myself.recipient());
     }
+
+    /// Subscribe current actor to event of type `E` and send the last cached event to it.
+    /// Events will be delivered as instant messages.
+    /// See [`crate::Context::subscribe()`].
+    pub fn subscribe_and_receive_latest<E: Event + Into<M>>(&self) -> Result<(), SendError>
+    where
+        M: 'static,
+    {
+        self.system_handle.subscribe_and_receive_latest::<M, E>(self.myself.recipient())
+    }
 }
 
 /// A wrapper around actors to add ability to receive delayed and recurring messages.
