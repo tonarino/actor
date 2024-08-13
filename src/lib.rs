@@ -92,13 +92,13 @@ impl fmt::Display for ActorError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             ActorError::SystemStopped { actor_name } => {
-                write!(f, "The system is not running. The actor {} can not be started.", actor_name)
+                write!(f, "the system is not running; the actor {} can not be started", actor_name)
             },
             ActorError::SpawnFailed { actor_name } => {
-                write!(f, "Failed to spawn a thread for the actor {}.", actor_name)
+                write!(f, "failed to spawn a thread for the actor {}", actor_name)
             },
             ActorError::ActorPanic => {
-                write!(f, "A panic inside an actor thread. See above for more verbose logs.")
+                write!(f, "panic inside an actor thread; see above for more verbose logs")
             },
         }
     }
@@ -125,7 +125,7 @@ impl fmt::Display for SendError {
             SendErrorReason::Full => {
                 write!(
                     f,
-                    "The capacity of {}'s {:?}-priority channel is full.",
+                    "the capacity of {}'s {:?}-priority channel is full",
                     recipient_name, priority
                 )
             },
@@ -145,7 +145,7 @@ impl fmt::Display for PublishError {
         let error_strings: Vec<String> = self.0.iter().map(ToString::to_string).collect();
         write!(
             f,
-            "Failed to deliver an event to {} subscribers: {}.",
+            "failed to deliver an event to {} subscribers: {}",
             self.0.len(),
             error_strings.join(", ")
         )
@@ -165,7 +165,7 @@ pub struct DisconnectedError {
 
 impl fmt::Display for DisconnectedError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "The recipient of the message ({}) no longer exists.", self.recipient_name)
+        write!(f, "the recipient of the message ({}) no longer exists", self.recipient_name)
     }
 }
 
@@ -645,12 +645,15 @@ impl System {
         // Note that the system may have transitioned from running to stopping (but not the other
         // way around) in the mean time. Slightly imprecise log and an extra no-op call is fine.
         if is_running {
-            error!("[{system_name}] {actor_name} {method_name} error: {error:#}, shutting down.");
+            error!(
+                "[{system_name}] {actor_name} {method_name}() error: {error:#}. Shutting down the \
+                 actor system."
+            );
             let _ = system_handle.shutdown();
         } else {
             warn!(
-                "[{system_name}] {actor_name} {method_name} error {error:#} while shutting down, \
-                 ignoring."
+                "[{system_name}] {actor_name} {method_name}() error while shutting down: \
+                 {error:#}. Ignoring."
             );
         }
     }
@@ -683,16 +686,16 @@ impl SystemHandle {
             match *system_state_lock {
                 SystemState::ShuttingDown | SystemState::Stopped => {
                     debug!(
-                        "Thread [{}] called system.shutdown() but the system is already shutting \
-                         down or stopped",
-                        current_thread_name
+                        "[{}] thread {} called system.shutdown() but the system is already \
+                         shutting down or stopped.",
+                        self.name, current_thread_name,
                     );
                     return Ok(());
                 },
                 SystemState::Running => {
                     info!(
-                        "Thread [{}] shutting down the actor system {}",
-                        current_thread_name, self.name
+                        "[{}] thread {} shutting down the actor system.",
+                        self.name, current_thread_name,
                     );
                     *system_state_lock = SystemState::ShuttingDown;
                 },
@@ -1290,7 +1293,7 @@ mod tests {
         let error = low_capacity_actor.send(123).unwrap_err();
         assert_eq!(
             error.to_string(),
-            "The capacity of TestActor's Normal-priority channel is full."
+            "the capacity of TestActor's Normal-priority channel is full"
         );
         assert_eq!(
             format!("{:?}", error),
@@ -1300,7 +1303,7 @@ mod tests {
         system.shutdown().unwrap();
 
         let error = stopped_actor.send(456usize).unwrap_err();
-        assert_eq!(error.to_string(), "The recipient of the message (TestActor) no longer exists.");
+        assert_eq!(error.to_string(), "the recipient of the message (TestActor) no longer exists");
         assert_eq!(
             format!("{:?}", error),
             r#"SendError { recipient_name: "TestActor", priority: Normal, reason: Disconnected }"#
