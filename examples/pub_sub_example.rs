@@ -1,4 +1,4 @@
-use anyhow::Error;
+use anyhow::{Error, Result};
 use env_logger::Env;
 use std::time::{Duration, Instant};
 use tonari_actor::{Actor, Context, Event, System};
@@ -40,9 +40,10 @@ impl Actor for PublisherActor {
         "PublisherActor"
     }
 
-    fn started(&mut self, context: &mut Self::Context) {
+    fn started(&mut self, context: &mut Self::Context) -> Result<()> {
         context.set_deadline(Some(self.started_at + Duration::from_millis(1500)));
         context.subscribe::<StringEvent>();
+        Ok(())
     }
 
     fn handle(
@@ -71,11 +72,7 @@ impl Actor for PublisherActor {
         Ok(())
     }
 
-    fn deadline_passed(
-        &mut self,
-        context: &mut Self::Context,
-        deadline: Instant,
-    ) -> Result<(), Error> {
+    fn deadline_passed(&mut self, context: &mut Self::Context, deadline: Instant) -> Result<()> {
         context.myself.send(PublisherMessage::Periodic)?;
         context.set_deadline(Some(deadline + Duration::from_secs(1)));
         Ok(())
@@ -104,15 +101,12 @@ impl Actor for SubscriberActor1 {
         "SubscriberActor1"
     }
 
-    fn started(&mut self, context: &mut Self::Context) {
+    fn started(&mut self, context: &mut Self::Context) -> Result<()> {
         context.subscribe::<StringEvent>();
+        Ok(())
     }
 
-    fn handle(
-        &mut self,
-        _context: &mut Self::Context,
-        message: Self::Message,
-    ) -> Result<(), Self::Error> {
+    fn handle(&mut self, _context: &mut Self::Context, message: Self::Message) -> Result<()> {
         match message {
             SubscriberMessage::Text(text) => {
                 println!("SubscriberActor1 got a text message: {:?}", text);
@@ -132,15 +126,12 @@ impl Actor for SubscriberActor2 {
         "SubscriberActor1"
     }
 
-    fn started(&mut self, context: &mut Self::Context) {
+    fn started(&mut self, context: &mut Self::Context) -> Result<()> {
         context.subscribe::<StringEvent>();
+        Ok(())
     }
 
-    fn handle(
-        &mut self,
-        _context: &mut Self::Context,
-        message: Self::Message,
-    ) -> Result<(), Self::Error> {
+    fn handle(&mut self, _context: &mut Self::Context, message: Self::Message) -> Result<()> {
         match message {
             SubscriberMessage::Text(text) => {
                 println!("SubscriberActor2 got a text message: {:?}", text);

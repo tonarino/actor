@@ -495,7 +495,10 @@ impl System {
             .spawn(move || {
                 let mut actor = factory();
 
-                actor.started(&mut context);
+                if let Err(error) = actor.started(&mut context) {
+                    Self::report_error_shutdown(&system_handle, A::name(), "started", error);
+                    return;
+                }
                 debug!("[{}] started actor: {}", system_handle.name, A::name());
 
                 Self::run_actor_select_loop(actor, addr, &mut context, &system_handle);
@@ -535,9 +538,13 @@ impl System {
 
         self.handle.registry.lock().push(RegistryEntry::CurrentThread(addr.control_tx.clone()));
 
-        actor.started(&mut context);
-        debug!("[{}] started actor: {}", system_handle.name, A::name());
-        Self::run_actor_select_loop(actor, addr, &mut context, system_handle);
+        match actor.started(&mut context) {
+            Ok(()) => {
+                debug!("[{}] started actor: {}", system_handle.name, A::name());
+                Self::run_actor_select_loop(actor, addr, &mut context, system_handle);
+            },
+            Err(error) => Self::report_error_shutdown(system_handle, A::name(), "started", error),
+        }
 
         // Wait for the system to shutdown before we exit, otherwise the process
         // would exit before the system is completely shutdown
@@ -602,7 +609,10 @@ impl System {
             // Process the event. Returning ends actor loop, the normal operation is to fall through.
             match received {
                 Received::Control(Control::Stop) => {
-                    actor.stopped(context);
+                    if let Err(error) = actor.stopped(context) {
+                        // FWIW this should always hit the "while shutting down" variant.
+                        Self::report_error_shutdown(system_handle, A::name(), "stopped", error);
+                    }
                     debug!("[{}] stopped actor: {}", system_handle.name, A::name());
                     return;
                 },
@@ -888,10 +898,14 @@ pub trait Actor {
     }
 
     /// An optional callback when the Actor has been started.
-    fn started(&mut self, _context: &mut Self::Context) {}
+    fn started(&mut self, _context: &mut Self::Context) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
     /// An optional callback when the Actor has been stopped.
-    fn stopped(&mut self, _context: &mut Self::Context) {}
+    fn stopped(&mut self, _context: &mut Self::Context) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
     /// An optional callback when a deadline has passed.
     ///
@@ -1132,16 +1146,17 @@ mod tests {
 
         fn handle(&mut self, _: &mut Self::Context, message: usize) -> Result<(), String> {
             println!("message: {}", message);
-
             Ok(())
         }
 
-        fn started(&mut self, _: &mut Self::Context) {
+        fn started(&mut self, _: &mut Self::Context) -> Result<(), String> {
             println!("started");
+            Ok(())
         }
 
-        fn stopped(&mut self, _: &mut Self::Context) {
+        fn stopped(&mut self, _: &mut Self::Context) -> Result<(), String> {
             println!("stopped");
+            Ok(())
         }
     }
 
@@ -1196,8 +1211,8 @@ mod tests {
             }
 
             /// We just need this test to compile, not run.
-            fn started(&mut self, ctx: &mut Self::Context) {
-                ctx.system_handle.shutdown().unwrap();
+            fn started(&mut self, ctx: &mut Self::Context) -> Result<(), String> {
+                ctx.system_handle.shutdown().map_err(|e| e.to_string())
             }
         }
 
@@ -1380,10 +1395,8 @@ mod tests {
             type Error = String;
             type Message = ();
 
-            fn started(&mut self, context: &mut Self::Context) {
-                context
-                    .subscribe_and_receive_latest::<Self::Message>()
-                    .expect("can receive last cached value");
+            fn started(&mut self, context: &mut Self::Context) -> Result<(), String> {
+                context.subscribe_and_receive_latest::<Self::Message>().map_err(|e| e.to_string())
             }
 
             fn handle(
