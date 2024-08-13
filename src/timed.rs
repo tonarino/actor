@@ -292,14 +292,14 @@ mod tests {
 
     impl Actor for TimedTestActor {
         type Context = TimedContext<Self::Message>;
-        type Error = ();
+        type Error = String;
         type Message = usize;
 
         fn name() -> &'static str {
             "TimedTestActor"
         }
 
-        fn handle(&mut self, context: &mut Self::Context, message: usize) -> Result<(), ()> {
+        fn handle(&mut self, context: &mut Self::Context, message: usize) -> Result<(), String> {
             {
                 let mut guard = self.received.lock().unwrap();
                 guard.push(message);
