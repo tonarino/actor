@@ -315,6 +315,9 @@ impl<M> Context<M> {
     ///
     /// Note that subscribing twice to the same event would result in duplicate events -- no
     /// de-duplication of subscriptions is performed.
+    ///
+    /// This method may fail if it is not possible to send the latest event. In this case it is
+    /// guaranteed that the subscription did not take place. You can safely try again.
     pub fn subscribe_and_receive_latest<E: Event + Into<M>>(&self) -> Result<(), SendError>
     where
         M: 'static,
