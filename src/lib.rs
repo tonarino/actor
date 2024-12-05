@@ -393,8 +393,8 @@ pub struct SpawnBuilderWithAddress<'a, A: Actor, F: FnOnce() -> A> {
     addr: Addr<A>,
 }
 
-impl<'a, A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
-    SpawnBuilderWithAddress<'a, A, F>
+impl<A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
+    SpawnBuilderWithAddress<'_, A, F>
 {
     /// Run this Actor on the current calling thread. This is a
     /// blocking call. This function will return when the Actor
@@ -406,10 +406,9 @@ impl<'a, A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce
 }
 
 impl<
-        'a,
         A: 'static + Actor<Context = Context<<A as Actor>::Message>>,
         F: FnOnce() -> A + Send + 'static,
-    > SpawnBuilderWithAddress<'a, A, F>
+    > SpawnBuilderWithAddress<'_, A, F>
 {
     /// Spawn this Actor into a new thread managed by the [`System`].
     pub fn spawn(self) -> Result<Addr<A>, ActorError> {
@@ -1385,10 +1384,10 @@ mod tests {
         );
     }
 
+    impl Event for () {}
+
     #[test]
     fn last_cached_event() {
-        impl Event for () {}
-
         struct Subscriber;
         impl Actor for Subscriber {
             type Context = Context<Self::Message>;
