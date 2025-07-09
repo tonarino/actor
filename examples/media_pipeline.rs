@@ -384,7 +384,7 @@ mod actors {
         ) -> Result<(), Self::Error> {
             match message {
                 MediaFrame::Audio(frame_counter) => {
-                    println!("🔊 Playing back audio frame {}", frame_counter);
+                    println!("🔊 Playing back audio frame {frame_counter}");
                 },
                 MediaFrame::Video(_) => {
                     bail!("Why did you give the AudioPlaybackActor a video MediaFrame?");
@@ -419,7 +419,7 @@ mod actors {
         ) -> Result<(), Self::Error> {
             match message {
                 MediaFrame::Video(frame_counter) => {
-                    println!("🖼 Display video frame {}", frame_counter);
+                    println!("🖼 Display video frame {frame_counter}");
 
                     if frame_counter >= 360 {
                         println!(

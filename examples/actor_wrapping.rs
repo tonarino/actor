@@ -62,7 +62,7 @@ impl Actor for TestActor {
     type Message = String;
 
     fn handle(&mut self, context: &mut Self::Context, message: String) -> Result<()> {
-        println!("Got a message: {}. Shuting down.", message);
+        println!("Got a message: {message}. Shuting down.");
         context.system_handle.shutdown().map_err(Error::from)
     }
 
@@ -76,7 +76,7 @@ impl Actor for TestActor {
     }
 
     fn deadline_passed(&mut self, context: &mut Self::Context, deadline: Instant) -> Result<()> {
-        context.myself.send(format!("deadline was {:?}", deadline)).map_err(Error::from)
+        context.myself.send(format!("deadline was {deadline:?}")).map_err(Error::from)
     }
 }
 
