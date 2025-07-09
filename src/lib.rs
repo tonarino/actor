@@ -92,10 +92,10 @@ impl fmt::Display for ActorError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             ActorError::SystemStopped { actor_name } => {
-                write!(f, "the system is not running; the actor {} can not be started", actor_name)
+                write!(f, "the system is not running; the actor {actor_name} can not be started")
             },
             ActorError::SpawnFailed { actor_name } => {
-                write!(f, "failed to spawn a thread for the actor {}", actor_name)
+                write!(f, "failed to spawn a thread for the actor {actor_name}")
             },
             ActorError::ActorPanic => {
                 write!(f, "panic inside an actor thread; see above for more verbose logs")
@@ -125,8 +125,7 @@ impl fmt::Display for SendError {
             SendErrorReason::Full => {
                 write!(
                     f,
-                    "the capacity of {}'s {:?}-priority channel is full",
-                    recipient_name, priority
+                    "the capacity of {recipient_name}'s {priority:?}-priority channel is full"
                 )
             },
             SendErrorReason::Disconnected => DisconnectedError { recipient_name, priority }.fmt(f),
@@ -730,7 +729,7 @@ impl SystemHandle {
                     let actor_name = entry.name();
 
                     if let Err(e) = entry.control_addr().send(Control::Stop) {
-                        warn!("control channel is closed: {} ({})", actor_name, e);
+                        warn!("control channel is closed: {actor_name} ({e})");
                     }
 
                     match entry {
@@ -743,7 +742,7 @@ impl SystemHandle {
                             debug!("[{}] [{}] joining actor thread: {}", self.name, i, actor_name);
 
                             let join_result = thread_handle.join().map_err(|e| {
-                                error!("a panic inside actor thread {}: {:?}", actor_name, e)
+                                error!("a panic inside actor thread {actor_name}: {e:?}")
                             });
 
                             debug!("[{}] [{}] joined actor thread:  {}", self.name, i, actor_name);
@@ -1144,7 +1143,7 @@ mod tests {
         }
 
         fn handle(&mut self, _: &mut Self::Context, message: usize) -> Result<(), String> {
-            println!("message: {}", message);
+            println!("message: {message}");
             Ok(())
         }
 
@@ -1310,7 +1309,7 @@ mod tests {
             "the capacity of TestActor's Normal-priority channel is full"
         );
         assert_eq!(
-            format!("{:?}", error),
+            format!("{error:?}"),
             r#"SendError { recipient_name: "TestActor", priority: Normal, reason: Full }"#
         );
 
@@ -1319,7 +1318,7 @@ mod tests {
         let error = stopped_actor.send(456usize).unwrap_err();
         assert_eq!(error.to_string(), "the recipient of the message (TestActor) no longer exists");
         assert_eq!(
-            format!("{:?}", error),
+            format!("{error:?}"),
             r#"SendError { recipient_name: "TestActor", priority: Normal, reason: Disconnected }"#
         );
     }

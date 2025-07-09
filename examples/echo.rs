@@ -22,7 +22,7 @@ use log::trace;
 use std::{
     convert::TryInto,
     io::{stdin, stdout, BufWriter, Read, Write},
-    iter::repeat,
+    iter::repeat_n,
     sync::Arc,
 };
 use tonari_actor::{Actor, Addr, Context, Recipient, System};
@@ -221,7 +221,7 @@ struct Delay {
 
 impl Delay {
     fn new(next: Recipient<WetChunk>) -> Self {
-        let buffer: Vec<Chunk> = repeat(silence_chunk()).take(DELAY_CHUNKS).collect();
+        let buffer: Vec<Chunk> = repeat_n(silence_chunk(), DELAY_CHUNKS).collect();
         Self { next, buffer, index: 0 }
     }
 }

@@ -65,7 +65,7 @@ impl Actor for PublisherActor {
                 context.system_handle.publish(StringEvent(text))?;
             },
             PublisherMessage::Text(text) => {
-                println!("PublisherActor got a text message: {:?}", text);
+                println!("PublisherActor got a text message: {text:?}");
             },
         }
 
@@ -109,7 +109,7 @@ impl Actor for SubscriberActor1 {
     fn handle(&mut self, _context: &mut Self::Context, message: Self::Message) -> Result<()> {
         match message {
             SubscriberMessage::Text(text) => {
-                println!("SubscriberActor1 got a text message: {:?}", text);
+                println!("SubscriberActor1 got a text message: {text:?}");
             },
         }
 
@@ -134,7 +134,7 @@ impl Actor for SubscriberActor2 {
     fn handle(&mut self, _context: &mut Self::Context, message: Self::Message) -> Result<()> {
         match message {
             SubscriberMessage::Text(text) => {
-                println!("SubscriberActor2 got a text message: {:?}", text);
+                println!("SubscriberActor2 got a text message: {text:?}");
             },
         }
 
