@@ -729,7 +729,7 @@ impl SystemHandle {
                     let actor_name = entry.name();
 
                     if let Err(e) = entry.control_addr().send(Control::Stop) {
-                        warn!("control channel is closed: {} ({})", actor_name, e);
+                        warn!("control channel is closed: {actor_name} ({e})");
                     }
 
                     match entry {
@@ -742,7 +742,7 @@ impl SystemHandle {
                             debug!("[{}] [{}] joining actor thread: {}", self.name, i, actor_name);
 
                             let join_result = thread_handle.join().map_err(|e| {
-                                error!("a panic inside actor thread {}: {:?}", actor_name, e)
+                                error!("a panic inside actor thread {actor_name}: {e:?}")
                             });
 
                             debug!("[{}] [{}] joined actor thread:  {}", self.name, i, actor_name);
