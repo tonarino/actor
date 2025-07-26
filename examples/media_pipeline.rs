@@ -1,7 +1,7 @@
 use crate::actors::*;
 use anyhow::Error;
 use env_logger::Env;
-use tonari_actor::{Addr, System, SystemCallbacks};
+use tonari_actor::{Actor, System, SystemCallbacks};
 
 /// A simplistic representation of a MediaFrame, they just hold frame counters.
 pub enum MediaFrame {
@@ -417,7 +417,7 @@ fn main() -> Result<(), Error> {
     })?;
 
     // Wire up the actors
-    let display_addr = Addr::default();
+    let display_addr = VideoDisplayActor::addr();
 
     // Receiving side
     let audio_playback_actor = system.spawn(AudioPlaybackActor::new())?;

@@ -3,7 +3,7 @@ use std::{hint::black_box, time::Duration};
 use tonari_actor::{Actor, Addr, Context, System};
 
 struct ChainLink {
-    next: Addr<ChainLink>,
+    next: Addr<u64>,
 }
 
 impl Actor for ChainLink {
@@ -26,10 +26,10 @@ impl Actor for ChainLink {
     }
 }
 
-fn make_chain(num_actors: usize) -> (System, Addr<ChainLink>, Addr<ChainLink>) {
+fn make_chain(num_actors: usize) -> (System, Addr<u64>, Addr<u64>) {
     let mut system = System::new("chain");
 
-    let addr = Addr::default();
+    let addr = ChainLink::addr();
     let mut next = addr.clone();
     for _ in 0..num_actors {
         next = system.spawn(ChainLink { next }).unwrap();
@@ -38,7 +38,7 @@ fn make_chain(num_actors: usize) -> (System, Addr<ChainLink>, Addr<ChainLink>) {
     (system, next, addr)
 }
 
-fn run_chain((mut system, start, end): (System, Addr<ChainLink>, Addr<ChainLink>)) {
+fn run_chain((mut system, start, end): (System, Addr<u64>, Addr<u64>)) {
     start.send(1000).unwrap();
     system.prepare(ChainLink { next: start }).with_addr(end).run_and_block().unwrap();
 }

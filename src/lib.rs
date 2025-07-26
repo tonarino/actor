@@ -339,30 +339,17 @@ impl<M> Clone for BareContext<M> {
     }
 }
 
-/// Capacity of actor's normal- and high-priority inboxes.
-/// For each inbox type, `None` signifies default capacity of given actor. Converts from [`usize`].
+/// Capacity of actor's normal- and high-priority inboxes. Converts from [`usize`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Capacity {
-    pub normal: Option<usize>,
-    pub high: Option<usize>,
-}
-
-impl Capacity {
-    /// Set capacity of the normal priority channel, and use default for the high priority one.
-    pub fn of_normal_priority(capacity: usize) -> Self {
-        Self { normal: Some(capacity), ..Default::default() }
-    }
-
-    /// Set capacity of the high priority channel, and use default for the normal priority one.
-    pub fn of_high_priority(capacity: usize) -> Self {
-        Self { high: Some(capacity), ..Default::default() }
-    }
+    pub normal: usize,
+    pub high: usize,
 }
 
 /// Set capacity of both normal and high priority channels to the same amount of messages.
 impl From<usize> for Capacity {
     fn from(capacity: usize) -> Self {
-        Self { normal: Some(capacity), high: Some(capacity) }
+        Self { normal: capacity, high: capacity }
     }
 }
 
@@ -380,19 +367,19 @@ impl<'a, A: Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
     SpawnBuilderWithoutAddress<'a, A, F>
 {
     /// Specify an existing [`Addr`] to use with this Actor.
-    pub fn with_addr(self, addr: Addr<A>) -> SpawnBuilderWithAddress<'a, A, F> {
+    pub fn with_addr(self, addr: Addr<A::Message>) -> SpawnBuilderWithAddress<'a, A, F> {
         SpawnBuilderWithAddress { spawn_builder: self, addr }
     }
 
     /// Specify a capacity for the actor's receiving channel. Accepts [`Capacity`] or [`usize`].
     pub fn with_capacity(self, capacity: impl Into<Capacity>) -> SpawnBuilderWithAddress<'a, A, F> {
-        let addr = Addr::with_capacity(capacity);
+        let addr = A::addr_with_capacity(capacity);
         SpawnBuilderWithAddress { spawn_builder: self, addr }
     }
 
     /// Use the default capacity for the actor's receiving channel.
     pub fn with_default_capacity(self) -> SpawnBuilderWithAddress<'a, A, F> {
-        let addr = Addr::with_capacity(Capacity::default());
+        let addr = A::addr();
         SpawnBuilderWithAddress { spawn_builder: self, addr }
     }
 }
@@ -403,7 +390,7 @@ impl<'a, A: Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
 /// or on the current thread with `run_and_block()`.
 pub struct SpawnBuilderWithAddress<'a, A: Actor, F: FnOnce() -> A> {
     spawn_builder: SpawnBuilderWithoutAddress<'a, A, F>,
-    addr: Addr<A>,
+    addr: Addr<A::Message>,
 }
 
 impl<A: Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
@@ -424,7 +411,7 @@ impl<
 > SpawnBuilderWithAddress<'_, A, F>
 {
     /// Spawn this Actor into a new thread managed by the [`System`].
-    pub fn spawn(self) -> Result<Addr<A>, ActorError> {
+    pub fn spawn(self) -> Result<Addr<A::Message>, ActorError> {
         let builder = self.spawn_builder;
         builder.system.spawn_fn_with_addr(builder.factory, self.addr.clone())?;
         Ok(self.addr)
@@ -475,7 +462,7 @@ impl System {
     /// Spawn a normal [`Actor`] in the system, returning its address when successful.
     /// This address is created by the system and uses a default capacity.
     /// If you need to customize the address see [`prepare`] or [`prepare_fn`] above.
-    pub fn spawn<A>(&mut self, actor: A) -> Result<Addr<A>, ActorError>
+    pub fn spawn<A>(&mut self, actor: A) -> Result<Addr<A::Message>, ActorError>
     where
         A: Actor<Context = Context<<A as Actor>::Message>> + Send + 'static,
     {
@@ -486,7 +473,11 @@ impl System {
     /// and an address that will be assigned to the Actor.
     ///
     /// This method is useful if you need to model circular dependencies between `Actor`s.
-    fn spawn_fn_with_addr<F, A>(&mut self, factory: F, addr: Addr<A>) -> Result<(), ActorError>
+    fn spawn_fn_with_addr<F, A>(
+        &mut self,
+        factory: F,
+        addr: Addr<A::Message>,
+    ) -> Result<(), ActorError>
     where
         F: FnOnce() -> A + Send + 'static,
         A: Actor<Context = Context<<A as Actor>::Message>> + 'static,
@@ -539,7 +530,7 @@ impl System {
 
     /// Takes an actor and its address and runs it on the calling thread. This function
     /// will exit once the actor has stopped.
-    fn block_on<A>(&mut self, mut actor: A, addr: Addr<A>) -> Result<(), ActorError>
+    fn block_on<A>(&mut self, mut actor: A, addr: Addr<A::Message>) -> Result<(), ActorError>
     where
         A: Actor<Context = Context<<A as Actor>::Message>>,
     {
@@ -577,7 +568,7 @@ impl System {
 
     fn run_actor_select_loop<A>(
         mut actor: A,
-        addr: Addr<A>,
+        addr: Addr<A::Message>,
         context: &mut Context<A::Message>,
         system_handle: &SystemHandle,
     ) where
@@ -988,22 +979,28 @@ pub trait Actor {
     ) -> Result<(), Self::Error> {
         Ok(())
     }
-}
 
-pub struct Addr<A: Actor + ?Sized> {
-    recipient: Recipient<A::Message>,
-    priority_rx: Receiver<A::Message>,
-    message_rx: Receiver<A::Message>,
-    control_rx: Receiver<Control>,
-}
+    /// Create address for this actor with default capacities.
+    fn addr() -> Addr<Self::Message> {
+        let capacity =
+            Capacity { normal: Self::DEFAULT_CAPACITY_NORMAL, high: Self::DEFAULT_CAPACITY_HIGH };
+        Self::addr_with_capacity(capacity)
+    }
 
-impl<A: Actor> Default for Addr<A> {
-    fn default() -> Self {
-        Self::with_capacity(Capacity::default())
+    /// Create address for this actor, specifying its inbox size. Accepts [`Capacity`] or [`usize`].
+    fn addr_with_capacity(capacity: impl Into<Capacity>) -> Addr<Self::Message> {
+        Addr::new(capacity, Self::name(), Self::priority)
     }
 }
 
-impl<A: Actor> Clone for Addr<A> {
+pub struct Addr<M> {
+    recipient: Recipient<M>,
+    priority_rx: Receiver<M>,
+    message_rx: Receiver<M>,
+    control_rx: Receiver<Control>,
+}
+
+impl<M> Clone for Addr<M> {
     fn clone(&self) -> Self {
         Self {
             recipient: self.recipient.clone(),
@@ -1014,10 +1011,7 @@ impl<A: Actor> Clone for Addr<A> {
     }
 }
 
-impl<A, M> Deref for Addr<A>
-where
-    A: Actor<Message = M>,
-{
+impl<M> Deref for Addr<M> {
     type Target = Recipient<M>;
 
     fn deref(&self) -> &Self::Target {
@@ -1025,24 +1019,20 @@ where
     }
 }
 
-impl<A: Actor> Addr<A> {
-    /// Create address for an actor, specifying its inbox size. Accepts [`Capacity`] or [`usize`].
-    pub fn with_capacity(capacity: impl Into<Capacity>) -> Self {
+impl<M: Send + 'static> Addr<M> {
+    fn new(
+        capacity: impl Into<Capacity>,
+        name: &'static str,
+        get_priority: fn(&M) -> Priority,
+    ) -> Self {
         let capacity: Capacity = capacity.into();
-        let prio_capacity = capacity.high.unwrap_or(A::DEFAULT_CAPACITY_HIGH);
-        let normal_capacity = capacity.normal.unwrap_or(A::DEFAULT_CAPACITY_NORMAL);
 
-        let (priority_tx, priority_rx) = flume::bounded::<A::Message>(prio_capacity);
-        let (message_tx, message_rx) = flume::bounded::<A::Message>(normal_capacity);
+        let (priority_tx, priority_rx) = flume::bounded::<M>(capacity.high);
+        let (message_tx, message_rx) = flume::bounded::<M>(capacity.normal);
         let (control_tx, control_rx) = flume::bounded(CONTROL_CHANNEL_CAPACITY);
 
-        let name = A::name();
-        let message_tx = Arc::new(MessageSender {
-            high: priority_tx,
-            normal: message_tx,
-            get_priority: A::priority,
-            name,
-        });
+        let message_tx =
+            Arc::new(MessageSender { high: priority_tx, normal: message_tx, get_priority, name });
         Self {
             recipient: Recipient { message_tx, control_tx },
             priority_rx,
@@ -1083,11 +1073,8 @@ impl<M> Recipient<M> {
 }
 
 impl<M: 'static> Recipient<M> {
-    /// Convert a [`Recipient<M>`] (or [`Addr<A>`] through [`Deref`], where `A::Message = M`) into
-    /// [`Recipient<N>`], where message `N` can be converted into `M`.
-    ///
-    /// In case of converting from [`Addr`], this erases the type of the actor and only preserves
-    /// type of the message, allowing you to make actors more independent of each other.
+    /// Convert a [`Recipient<M>`] (or [`Addr<M>`] through [`Deref`]) into [`Recipient<N>`], where
+    /// message `N` can be converted into `M`.
     pub fn recipient<N: Into<M>>(&self) -> Recipient<N> {
         Recipient {
             // Each level of boxing adds one .into() call, so box here to convert A::Message to M.
@@ -1335,7 +1322,7 @@ mod tests {
     #[test]
     fn errors() {
         let mut system = System::new("hi");
-        let low_capacity_actor: Addr<TestActor> = Addr::with_capacity(1);
+        let low_capacity_actor = TestActor::addr_with_capacity(1);
         // Convert to `Recipient` so that we don't keep the receiving side of `Addr` alive.
         let stopped_actor = system.spawn(TestActor).unwrap().recipient();
 
@@ -1391,7 +1378,7 @@ mod tests {
             }
         }
 
-        let addr = Addr::with_capacity(10);
+        let addr = PriorityActor::addr_with_capacity(10);
         let received = Arc::new(Mutex::new(Vec::<usize>::new()));
 
         // Send messages before even actor starts.
@@ -1443,7 +1430,7 @@ mod tests {
         // This test will block indefinitely if the event isn't delivered.
         system
             .prepare(Subscriber)
-            .with_addr(Addr::with_capacity(1))
+            .with_capacity(1)
             .run_and_block()
             .expect("actor finishes successfully");
     }
