@@ -10,6 +10,10 @@ homepage = "https://github.com/tonarino/actor"
 readme = "README.md"
 keywords = ["actor", "threads"]
 
+[features]
+default = []
+async = ["flume/async"]
+
 [dependencies]
 dashmap = "6"
 # Make sure the eventual-fairness feature is disabled for priority queues.
