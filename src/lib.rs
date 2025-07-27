@@ -68,7 +68,7 @@ use std::{
 };
 
 #[cfg(feature = "async")]
-pub mod async_actor;
+pub mod r#async;
 pub mod timed;
 
 /// Capacity of the control channel (used to deliver [Control] messages).
