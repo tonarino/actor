@@ -12,7 +12,7 @@ keywords = ["actor", "threads"]
 
 [features]
 default = []
-async = ["flume/async"]
+async = ["flume/async", "dep:tokio"]
 
 [dependencies]
 dashmap = "6"
@@ -20,6 +20,7 @@ dashmap = "6"
 flume = { version = "0.11", default-features = false, features = ["select"] }
 log = "0.4"
 parking_lot = "0.12"
+tokio = { version = "1", features = ["rt"], optional = true }
 
 [dev-dependencies]
 anyhow = "1"
