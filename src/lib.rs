@@ -355,7 +355,7 @@ pub struct SpawnBuilderWithoutAddress<'a, A: Actor, F: FnOnce() -> A> {
     factory: F,
 }
 
-impl<'a, A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
+impl<'a, A: Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
     SpawnBuilderWithoutAddress<'a, A, F>
 {
     /// Specify an existing [`Addr`] to use with this Actor.
@@ -385,7 +385,7 @@ pub struct SpawnBuilderWithAddress<'a, A: Actor, F: FnOnce() -> A> {
     addr: Addr<A>,
 }
 
-impl<A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
+impl<A: Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
     SpawnBuilderWithAddress<'_, A, F>
 {
     /// Run this Actor on the current calling thread. This is a
@@ -430,7 +430,7 @@ impl System {
     /// which has to be further configured before spawning the actor.
     pub fn prepare<A>(&mut self, actor: A) -> SpawnBuilderWithoutAddress<A, impl FnOnce() -> A>
     where
-        A: Actor + 'static,
+        A: Actor,
     {
         SpawnBuilderWithoutAddress { system: self, factory: move || actor }
     }
@@ -442,8 +442,8 @@ impl System {
     /// configured before spawning the actor.
     pub fn prepare_fn<A, F>(&mut self, factory: F) -> SpawnBuilderWithoutAddress<A, F>
     where
-        A: Actor + 'static,
-        F: FnOnce() -> A + Send + 'static,
+        A: Actor,
+        F: FnOnce() -> A + Send,
     {
         SpawnBuilderWithoutAddress { system: self, factory }
     }
