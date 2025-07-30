@@ -742,6 +742,10 @@ impl SystemHandle {
                         RegistryEntry::CurrentThread(_) => None,
                         RegistryEntry::BackgroundThread(_control_addr, thread_handle) => {
                             if thread_handle.thread().id() == current_thread.id() {
+                                debug!(
+                                    "[{}] [{}] skipping join of the current thread: {}",
+                                    self.name, i, actor_name
+                                );
                                 return None;
                             }
 
