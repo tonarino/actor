@@ -52,6 +52,11 @@
 //!
 //! Keep in mind that the event system has an additional requirement that the event type needs to be
 //! [`Clone`] and is not intended to be high-throughput. Run the `pub_sub` benchmark to get an idea.
+//!
+//! # Async Actors
+//!
+//! Support of `async` actors exists under the `async` feature flag. See the documentation of the
+//! [`async`] module for more info.
 
 use flume::{Receiver, RecvError, Selector, Sender, select::SelectError};
 use log::*;
@@ -502,7 +507,7 @@ impl System {
                 let mut actor = factory();
 
                 if let Err(error) = actor.started(&mut context) {
-                    Self::report_error_shutdown(&system_handle, A::name(), "started", error);
+                    Self::report_error_shutdown(&system_handle, A::name(), "started()", error);
                     return;
                 }
                 debug!("[{}] started actor: {}", system_handle.name, A::name());
@@ -552,7 +557,7 @@ impl System {
                 debug!("[{}] started actor: {}", system_handle.name, A::name());
                 Self::run_actor_select_loop(actor, addr, &mut context, system_handle);
             },
-            Err(error) => Self::report_error_shutdown(system_handle, A::name(), "started", error),
+            Err(error) => Self::report_error_shutdown(system_handle, A::name(), "started()", error),
         }
 
         // Wait for the system to shutdown before we exit, otherwise the process
@@ -566,6 +571,7 @@ impl System {
         Ok(())
     }
 
+    /// Keep logically in sync with [`Self::run_async_actor_select_loop()`].
     fn run_actor_select_loop<A>(
         mut actor: A,
         addr: Addr<A::Message>,
@@ -620,7 +626,7 @@ impl System {
                 Received::Control(Control::Stop) => {
                     if let Err(error) = actor.stopped(context) {
                         // FWIW this should always hit the "while shutting down" variant.
-                        Self::report_error_shutdown(system_handle, A::name(), "stopped", error);
+                        Self::report_error_shutdown(system_handle, A::name(), "stopped()", error);
                     }
                     debug!("[{}] stopped actor: {}", system_handle.name, A::name());
                     return;
@@ -628,7 +634,7 @@ impl System {
                 Received::Message(msg) => {
                     trace!("[{}] message received by {}", system_handle.name, A::name());
                     if let Err(error) = actor.handle(context, msg) {
-                        Self::report_error_shutdown(system_handle, A::name(), "handle", error);
+                        Self::report_error_shutdown(system_handle, A::name(), "handle()", error);
                         return;
                     }
                 },
@@ -638,7 +644,7 @@ impl System {
                         Self::report_error_shutdown(
                             system_handle,
                             A::name(),
-                            "deadline_passed",
+                            "deadline_passed()",
                             error,
                         );
                         return;
@@ -651,7 +657,7 @@ impl System {
     fn report_error_shutdown(
         system_handle: &SystemHandle,
         actor_name: &str,
-        method_name: &str,
+        action: &str,
         error: impl std::fmt::Display,
     ) {
         let is_running = match *system_handle.system_state.read() {
@@ -665,14 +671,14 @@ impl System {
         // way around) in the mean time. Slightly imprecise log and an extra no-op call is fine.
         if is_running {
             error!(
-                "[{system_name}] {actor_name} {method_name}() error: {error:#}. Shutting down the \
-                 actor system."
+                "[{system_name}] {actor_name} {action} error: {error:#}. Shutting down the actor \
+                 system."
             );
             let _ = system_handle.shutdown();
         } else {
             warn!(
-                "[{system_name}] {actor_name} {method_name}() error while shutting down: \
-                 {error:#}. Ignoring."
+                "[{system_name}] {actor_name} {action} error while shutting down: {error:#}. \
+                 Ignoring."
             );
         }
     }
@@ -1349,7 +1355,10 @@ mod tests {
 
     #[test]
     fn message_priorities() {
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace")).init();
+        // Logger might have been initialized by another test, so just try on best-effort basis.
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace"))
+            .try_init()
+            .ok();
 
         struct PriorityActor {
             received: Arc<Mutex<Vec<usize>>>,
