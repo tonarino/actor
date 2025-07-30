@@ -405,10 +405,8 @@ impl<A: Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
     }
 }
 
-impl<
-    A: 'static + Actor<Context = Context<<A as Actor>::Message>>,
-    F: FnOnce() -> A + Send + 'static,
-> SpawnBuilderWithAddress<'_, A, F>
+impl<A: Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A + Send + 'static>
+    SpawnBuilderWithAddress<'_, A, F>
 {
     /// Spawn this Actor into a new thread managed by the [`System`].
     pub fn spawn(self) -> Result<Addr<A::Message>, ActorError> {
@@ -480,7 +478,7 @@ impl System {
     ) -> Result<(), ActorError>
     where
         F: FnOnce() -> A + Send + 'static,
-        A: Actor<Context = Context<<A as Actor>::Message>> + 'static,
+        A: Actor<Context = Context<<A as Actor>::Message>>,
     {
         // Hold the lock until the end of the function to prevent the race
         // condition between spawn and shutdown.
