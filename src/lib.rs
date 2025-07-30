@@ -577,7 +577,7 @@ impl System {
                 .recv(&addr.priority_rx, |msg| match msg {
                     Ok(msg) => Received::Message(msg),
                     Err(RecvError::Disconnected) => {
-                        panic!("We keep message_tx alive through addr, should not happen.")
+                        panic!("We keep priority_tx alive through addr, should not happen.")
                     },
                 })
                 .recv(&addr.message_rx, |msg| match msg {
