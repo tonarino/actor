@@ -14,13 +14,9 @@
 //!
 //! struct TestActor {}
 //! impl Actor for TestActor {
-//!     type Context = Context<Self::Message>;
-//!     type Error = String;
 //!     type Message = usize;
-//!
-//!     fn name() -> &'static str {
-//!         "TestActor"
-//!     }
+//!     type Error = String;
+//!     type Context = Context<Self::Message>;
 //!
 //!     fn handle(&mut self, _context: &mut Self::Context, message: Self::Message) -> Result<(), String> {
 //!         println!("message: {}", message);
@@ -61,7 +57,7 @@ use flume::{select::SelectError, Receiver, RecvError, Selector, Sender};
 use log::*;
 use parking_lot::{Mutex, RwLock};
 use std::{
-    any::TypeId,
+    any::{type_name, TypeId},
     collections::HashMap,
     fmt,
     ops::Deref,
@@ -889,15 +885,11 @@ pub trait Actor {
     /// Default capacity of actor's high-priority inbox unless overridden by `.with_capacity()`.
     const DEFAULT_CAPACITY_HIGH: usize = 5;
 
-    /// The primary function of this trait, allowing an actor to handle incoming messages of a certain type.
-    fn handle(
-        &mut self,
-        context: &mut Self::Context,
-        message: Self::Message,
-    ) -> Result<(), Self::Error>;
-
-    /// The name of the Actor - used only for logging/debugging.
-    fn name() -> &'static str;
+    /// The name of the Actor. Used only for logging/debugging.
+    /// Default implementation uses [`type_name()`].
+    fn name() -> &'static str {
+        type_name::<Self>()
+    }
 
     /// Determine priority of a `message` before it is sent to this actor.
     /// Default implementation returns [`Priority::Normal`].
@@ -909,6 +901,13 @@ pub trait Actor {
     fn started(&mut self, _context: &mut Self::Context) -> Result<(), Self::Error> {
         Ok(())
     }
+
+    /// The primary function of this trait, allowing an actor to handle incoming messages of a certain type.
+    fn handle(
+        &mut self,
+        context: &mut Self::Context,
+        message: Self::Message,
+    ) -> Result<(), Self::Error>;
 
     /// An optional callback when the Actor has been stopped.
     fn stopped(&mut self, _context: &mut Self::Context) -> Result<(), Self::Error> {
@@ -929,7 +928,6 @@ pub trait Actor {
     /// #    type Context = Context<Self::Message>;
     /// #    type Error = String;
     /// #    type Message = ();
-    /// #    fn name() -> &'static str { "TickingActor" }
     /// #    fn handle(&mut self, _: &mut Self::Context, _: ()) -> Result<(), String> { Ok(()) }
     ///     // ...
     ///
@@ -1148,6 +1146,7 @@ mod tests {
         type Error = String;
         type Message = usize;
 
+        // The name is mentioned in tests, use a short fixed one rather than default type_name().
         fn name() -> &'static str {
             "TestActor"
         }
@@ -1210,10 +1209,6 @@ mod tests {
             type Error = String;
             type Message = ();
 
-            fn name() -> &'static str {
-                "LocalActor"
-            }
-
             fn handle(&mut self, _: &mut Self::Context, _: ()) -> Result<(), String> {
                 Ok(())
             }
@@ -1246,10 +1241,6 @@ mod tests {
             type Context = Context<Self::Message>;
             type Error = String;
             type Message = Option<Instant>;
-
-            fn name() -> &'static str {
-                "TimeoutActor"
-            }
 
             fn handle(
                 &mut self,
@@ -1359,10 +1350,6 @@ mod tests {
                 Ok(())
             }
 
-            fn name() -> &'static str {
-                "PriorityActor"
-            }
-
             fn priority(message: &Self::Message) -> Priority {
                 if *message >= 10 {
                     Priority::High
@@ -1415,10 +1402,6 @@ mod tests {
                 println!("Event received!");
                 context.system_handle.shutdown().unwrap();
                 Ok(())
-            }
-
-            fn name() -> &'static str {
-                "recipient"
             }
         }
 

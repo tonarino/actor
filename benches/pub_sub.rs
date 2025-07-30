@@ -32,10 +32,6 @@ impl Actor for PublisherActor {
     type Error = Error;
     type Message = PublisherMessage;
 
-    fn name() -> &'static str {
-        "PublisherActor"
-    }
-
     fn handle(&mut self, context: &mut Self::Context, message: Self::Message) -> Result<()> {
         match message {
             PublisherMessage::SubscriberStarted => {
@@ -74,10 +70,6 @@ impl Actor for SubscriberActor {
     type Context = Context<Self::Message>;
     type Error = Error;
     type Message = StringEvent;
-
-    fn name() -> &'static str {
-        "SubscriberActor"
-    }
 
     fn started(&mut self, context: &mut Self::Context) -> Result<()> {
         context.subscribe::<StringEvent>();

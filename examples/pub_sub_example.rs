@@ -36,10 +36,6 @@ impl Actor for PublisherActor {
     type Error = Error;
     type Message = PublisherMessage;
 
-    fn name() -> &'static str {
-        "PublisherActor"
-    }
-
     fn started(&mut self, context: &mut Self::Context) -> Result<()> {
         context.set_deadline(Some(self.started_at + Duration::from_millis(1500)));
         context.subscribe::<StringEvent>();
@@ -97,10 +93,6 @@ impl Actor for SubscriberActor1 {
     type Error = Error;
     type Message = SubscriberMessage;
 
-    fn name() -> &'static str {
-        "SubscriberActor1"
-    }
-
     fn started(&mut self, context: &mut Self::Context) -> Result<()> {
         context.subscribe::<StringEvent>();
         Ok(())
@@ -121,10 +113,6 @@ impl Actor for SubscriberActor2 {
     type Context = Context<Self::Message>;
     type Error = Error;
     type Message = SubscriberMessage;
-
-    fn name() -> &'static str {
-        "SubscriberActor1"
-    }
 
     fn started(&mut self, context: &mut Self::Context) -> Result<()> {
         context.subscribe::<StringEvent>();

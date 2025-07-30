@@ -38,10 +38,6 @@ mod actors {
         type Error = Error;
         type Message = ();
 
-        fn name() -> &'static str {
-            "ShutdownActor"
-        }
-
         fn handle(
             &mut self,
             context: &mut Self::Context,
@@ -68,10 +64,6 @@ mod actors {
         type Context = Context<Self::Message>;
         type Error = Error;
         type Message = VideoCaptureMessage;
-
-        fn name() -> &'static str {
-            "VideoCaptureActor"
-        }
 
         fn handle(
             &mut self,
@@ -107,10 +99,6 @@ mod actors {
         type Context = Context<Self::Message>;
         type Error = Error;
         type Message = MediaFrame;
-
-        fn name() -> &'static str {
-            "VideoEncodeActor"
-        }
 
         fn handle(
             &mut self,
@@ -148,10 +136,6 @@ mod actors {
         type Error = Error;
         type Message = AudioCaptureMessage;
 
-        fn name() -> &'static str {
-            "AudioCaptureActor"
-        }
-
         fn handle(
             &mut self,
             context: &mut Self::Context,
@@ -188,10 +172,6 @@ mod actors {
         type Error = Error;
         type Message = MediaFrame;
 
-        fn name() -> &'static str {
-            "AudioEncodeActor"
-        }
-
         fn handle(
             &mut self,
             _context: &mut Self::Context,
@@ -227,10 +207,6 @@ mod actors {
         type Error = Error;
         type Message = EncodedMediaFrame;
 
-        fn name() -> &'static str {
-            "NetworkSenderActor"
-        }
-
         fn handle(
             &mut self,
             _context: &mut Self::Context,
@@ -263,10 +239,6 @@ mod actors {
         type Context = Context<Self::Message>;
         type Error = Error;
         type Message = EncodedMediaFrame;
-
-        fn name() -> &'static str {
-            "NetworkReceiverActor"
-        }
 
         fn handle(
             &mut self,
@@ -301,10 +273,6 @@ mod actors {
         type Error = Error;
         type Message = EncodedMediaFrame;
 
-        fn name() -> &'static str {
-            "VideoDecodeActor"
-        }
-
         fn handle(
             &mut self,
             _context: &mut Self::Context,
@@ -338,10 +306,6 @@ mod actors {
         type Error = Error;
         type Message = EncodedMediaFrame;
 
-        fn name() -> &'static str {
-            "AudioDecodeActor"
-        }
-
         fn handle(
             &mut self,
             _context: &mut Self::Context,
@@ -373,10 +337,6 @@ mod actors {
         type Error = Error;
         type Message = MediaFrame;
 
-        fn name() -> &'static str {
-            "AudioPlaybackActor"
-        }
-
         fn handle(
             &mut self,
             _context: &mut Self::Context,
@@ -407,10 +367,6 @@ mod actors {
         type Context = Context<Self::Message>;
         type Error = Error;
         type Message = MediaFrame;
-
-        fn name() -> &'static str {
-            "VideoDisplayActor"
-        }
 
         fn handle(
             &mut self,

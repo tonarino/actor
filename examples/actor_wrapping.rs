@@ -66,10 +66,6 @@ impl Actor for TestActor {
         context.system_handle.shutdown().map_err(Error::from)
     }
 
-    fn name() -> &'static str {
-        "TestActor"
-    }
-
     fn started(&mut self, context: &mut Self::Context) -> Result<()> {
         context.set_timeout(Some(Duration::from_millis(100)));
         Ok(())

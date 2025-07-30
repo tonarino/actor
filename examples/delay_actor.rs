@@ -17,10 +17,6 @@ impl Actor for FinalConsumer {
 
     const DEFAULT_CAPACITY_NORMAL: usize = 6;
 
-    fn name() -> &'static str {
-        "FinalConsumer"
-    }
-
     fn handle(&mut self, context: &mut Self::Context, message: String) -> Result<(), Error> {
         println!("Got a message: {:?} at {:?}", message, self.started_at.elapsed());
         if message == "last" {
