@@ -7,14 +7,18 @@
 //! `async` actors implement [`AsyncActor`] and are spawned using [`System::spawn_async()`],
 //! [`System::prepare_async()`] and [`System::prepare_async_fn()`].
 //!
-//! Sync and `async` actors share the same [`Addr`] and [`Recipient`](crate::Recipient) types.System::prepare()
+//! Sync and `async` actors share the same [`Addr`] and [`Recipient`](crate::Recipient) types.
 //!
 //! `async` actors share the same paradigm as sync actors: each one gets its own OS-level thread.
 //! More specifically a single-threaded async runtime is spawned for every `async` actor.
 //!
 //! `tonari-actor` currently uses the [`tokio`] ecosystem, more specifically its [`LocalRuntime`][^tokio].
 //!
-//! [^tokio]:
+//! TODO explain tokio feature flags and that downstreams may need to enable more.
+//!
+//! [^tokio]: TODO explain that any runtime is sufficient (no dependency on tokio-specific features)
+//!     we only need to spawn _some_ runtime in the actor loop. tokio was just a pragmatic choice.
+//!     we could add support for alternative ones, even runtime-configurable.
 
 use crate::{
     ActorError, Addr, Capacity, Context, Control, Priority, RegistryEntry, System, SystemHandle,
