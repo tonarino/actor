@@ -72,9 +72,6 @@ use std::{
 
 pub mod timed;
 
-#[cfg(test)]
-pub mod testing;
-
 /// Capacity of the control channel (used to deliver [Control] messages).
 const CONTROL_CHANNEL_CAPACITY: usize = 5;
 
