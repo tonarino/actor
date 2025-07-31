@@ -739,12 +739,20 @@ impl SystemHandle {
                     let actor_name = entry.name();
 
                     match entry {
-                        RegistryEntry::CurrentThread(_) => None,
+                        RegistryEntry::CurrentThread(_) => {
+                            debug!(
+                                "[{}] [{i}] skipping join of an actor running in-place: \
+                                 {actor_name}",
+                                self.name
+                            );
+                            None
+                        },
                         RegistryEntry::BackgroundThread(_control_addr, thread_handle) => {
                             if thread_handle.thread().id() == current_thread.id() {
                                 debug!(
-                                    "[{}] [{}] skipping join of the current thread: {}",
-                                    self.name, i, actor_name
+                                    "[{}] [{i}] skipping join of the actor thread currently \
+                                     executing SystemHandle::shutdown(): {actor_name}",
+                                    self.name,
                                 );
                                 return None;
                             }
@@ -844,6 +852,7 @@ impl SystemHandle {
 }
 
 enum RegistryEntry {
+    // TODO(Matej): rename to "InPlace" or similar, "current thread" is too relative/vague.
     CurrentThread(Sender<Control>),
     BackgroundThread(Sender<Control>, thread::JoinHandle<()>),
 }
@@ -852,6 +861,8 @@ impl RegistryEntry {
     fn name(&self) -> String {
         match self {
             RegistryEntry::CurrentThread(_) => {
+                // TODO(Matej): this returns incorrect name when called from _another_ thread.
+                // To be correct, we likely need to store the `Thread` handle on the variant.
                 thread::current().name().unwrap_or("unnamed").to_owned()
             },
             RegistryEntry::BackgroundThread(_, thread_handle) => {
@@ -889,7 +900,7 @@ pub trait Actor {
     /// Default capacity of actor's high-priority inbox unless overridden by `.with_capacity()`.
     const DEFAULT_CAPACITY_HIGH: usize = 5;
 
-    /// The name of the Actor. Used only for logging/debugging.
+    /// The name of the Actor. Used by `tonari-actor` for logging/debugging.
     /// Default implementation uses [`type_name()`].
     fn name() -> &'static str {
         type_name::<Self>()
@@ -1150,8 +1161,10 @@ mod tests {
         type Error = String;
         type Message = usize;
 
-        // The name is mentioned in tests, use a short fixed one rather than default type_name().
         fn name() -> &'static str {
+            // The name is asserted against in tests, use a short stable one rather than the default
+            // implementation (`type_name()`)`, which is documented not to be stable and currently
+            // produces `tonari_actor::tests::TestActor`.
             "TestActor"
         }
 
