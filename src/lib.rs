@@ -684,6 +684,8 @@ impl Deref for System {
 impl SystemHandle {
     /// Stops all actors spawned by this system.
     pub fn shutdown(&self) -> Result<(), ActorError> {
+        let shutdown_start = Instant::now();
+
         let current_thread = thread::current();
         let current_thread_name = current_thread.name().unwrap_or("Unknown thread id");
 
@@ -720,17 +722,28 @@ impl SystemHandle {
         let err_count = {
             let mut registry = self.registry.lock();
             debug!("[{}] joining {} actor threads.", self.name, registry.len());
-            // Joining actors in the reverse order in which they are spawn.
+
+            // Stop actors in the reverse order in which they were spawned.
+            // Send the Stop control message to all actors first so they can
+            // all shut down in parallel, so actors will be in the process of
+            // stopping when we join the threads below.
+            for entry in registry.iter_mut().rev() {
+                let actor_name = entry.name();
+
+                if let Err(e) = entry.control_addr().send(Control::Stop) {
+                    warn!(
+                        "Couldn't send Control::Stop to {actor_name} to shut it down: {e:#}. \
+                         Ignoring and proceeding."
+                    );
+                }
+            }
+
             registry
                 .drain(..)
                 .rev()
                 .enumerate()
-                .filter_map(|(i, mut entry)| {
+                .filter_map(|(i, entry)| {
                     let actor_name = entry.name();
-
-                    if let Err(e) = entry.control_addr().send(Control::Stop) {
-                        warn!("control channel is closed: {actor_name} ({e})");
-                    }
 
                     match entry {
                         RegistryEntry::CurrentThread(_) => None,
@@ -753,7 +766,7 @@ impl SystemHandle {
                 .count()
         };
 
-        info!("[{}] system finished shutting down.", self.name);
+        info!("[{}] system finished shutting down in {:?}.", self.name, shutdown_start.elapsed());
 
         if let Some(callback) = self.callbacks.postshutdown.as_ref() {
             info!("[{}] calling post-shutdown callback.", self.name);
