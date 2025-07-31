@@ -25,7 +25,7 @@ use std::{
     iter::repeat_n,
     sync::Arc,
 };
-use tonari_actor::{Actor, Addr, Context, Recipient, System};
+use tonari_actor::{Actor, Context, Recipient, System};
 
 /// One audio sample. Defaults of pacat are --format=s16ne (signed 16bit) and --chanels=2 (stereo).
 type Sample = [i16; 2];
@@ -259,7 +259,7 @@ fn main() -> Result<(), Error> {
     let output_addr = system.spawn(Output)?;
 
     // Create Mixer address explicitly in order to break the circular dependency loop.
-    let mixer_addr = Addr::default();
+    let mixer_addr = Mixer::addr();
 
     // Delay feeds back into Mixer.
     let delay_addr = system.spawn(Delay::new(mixer_addr.recipient()))?;
