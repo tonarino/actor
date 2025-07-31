@@ -23,10 +23,6 @@ impl Actor for TimerExampleActor {
     type Error = Error;
     type Message = TimerMessage;
 
-    fn name() -> &'static str {
-        "TimerExampleActor"
-    }
-
     fn started(&mut self, context: &mut Self::Context) -> Result<()> {
         context.set_deadline(Some(self.started_at + Duration::from_millis(1500)));
         Ok(())

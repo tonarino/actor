@@ -295,10 +295,6 @@ mod tests {
         type Error = String;
         type Message = usize;
 
-        fn name() -> &'static str {
-            "TimedTestActor"
-        }
-
         fn handle(&mut self, context: &mut Self::Context, message: usize) -> Result<(), String> {
             {
                 let mut guard = self.received.lock().unwrap();

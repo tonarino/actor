@@ -11,16 +11,16 @@ readme = "README.md"
 keywords = ["actor", "threads"]
 
 [dependencies]
+dashmap = "6"
 # Make sure the eventual-fairness feature is disabled for priority queues.
 flume = { version = "0.10", default-features = false, features = ["select"] }
 log = "0.4"
 parking_lot = "0.12"
-dashmap = "6"
 
 [dev-dependencies]
 anyhow = "1"
-ctrlc = "3.1"
 criterion = "0.4"
+ctrlc = "3.1"
 env_logger = "0.10"
 num_cpus = "1"
 

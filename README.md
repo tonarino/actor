@@ -26,10 +26,6 @@ impl Actor for TestActor {
     type Error = ();
     type Message = usize;
 
-    fn name() -> &'static str {
-        "TestActor"
-    }
-
     fn handle(&mut self, _context: &Context<Self>, message: Self::Message) -> Result<(), ()> {
         println!("message: {}", message);
 

@@ -11,10 +11,6 @@ impl Actor for ChainLink {
     type Error = String;
     type Message = u64;
 
-    fn name() -> &'static str {
-        "ChainLink"
-    }
-
     fn handle(
         &mut self,
         context: &mut Self::Context,

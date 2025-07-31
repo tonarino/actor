@@ -80,10 +80,6 @@ impl Actor for Input {
     type Error = Error;
     type Message = ReadNext;
 
-    fn name() -> &'static str {
-        "Input"
-    }
-
     fn handle(
         &mut self,
         context: &mut Self::Context,
@@ -118,10 +114,6 @@ impl Actor for Output {
 
     // Set larger message channel capacity for Output actor for some cushion.
     const DEFAULT_CAPACITY_NORMAL: usize = 60;
-
-    fn name() -> &'static str {
-        "Output"
-    }
 
     fn handle(&mut self, _context: &mut Self::Context, message: Chunk) -> Result<(), Self::Error> {
         let mut buffered_stdout = BufWriter::new(stdout());
@@ -180,10 +172,6 @@ impl Actor for Mixer {
     type Error = Error;
     type Message = MixerInput;
 
-    fn name() -> &'static str {
-        "Mixer"
-    }
-
     fn handle(&mut self, _context: &mut Self::Context, message: MixerInput) -> Result<(), Error> {
         // Naive implementation that simply overwrites on overflow.
         match message {
@@ -231,10 +219,6 @@ impl Actor for Delay {
     type Error = Error;
     type Message = Chunk;
 
-    fn name() -> &'static str {
-        "Delay"
-    }
-
     fn handle(&mut self, _context: &mut Self::Context, message: Chunk) -> Result<(), Error> {
         self.buffer[self.index] = message;
 
@@ -255,10 +239,6 @@ impl Actor for Damper {
     type Context = Context<Self::Message>;
     type Error = Error;
     type Message = Chunk;
-
-    fn name() -> &'static str {
-        "Damper"
-    }
 
     fn handle(&mut self, _context: &mut Self::Context, message: Chunk) -> Result<(), Error> {
         // Halve the signal.

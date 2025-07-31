@@ -14,13 +14,9 @@
 //!
 //! struct TestActor {}
 //! impl Actor for TestActor {
-//!     type Context = Context<Self::Message>;
-//!     type Error = String;
 //!     type Message = usize;
-//!
-//!     fn name() -> &'static str {
-//!         "TestActor"
-//!     }
+//!     type Error = String;
+//!     type Context = Context<Self::Message>;
 //!
 //!     fn handle(&mut self, _context: &mut Self::Context, message: Self::Message) -> Result<(), String> {
 //!         println!("message: {}", message);
@@ -61,7 +57,7 @@ use flume::{select::SelectError, Receiver, RecvError, Selector, Sender};
 use log::*;
 use parking_lot::{Mutex, RwLock};
 use std::{
-    any::TypeId,
+    any::{type_name, TypeId},
     collections::HashMap,
     fmt,
     ops::Deref,
@@ -71,9 +67,6 @@ use std::{
 };
 
 pub mod timed;
-
-#[cfg(test)]
-pub mod testing;
 
 /// Capacity of the control channel (used to deliver [Control] messages).
 const CONTROL_CHANNEL_CAPACITY: usize = 5;
@@ -362,7 +355,7 @@ pub struct SpawnBuilderWithoutAddress<'a, A: Actor, F: FnOnce() -> A> {
     factory: F,
 }
 
-impl<'a, A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
+impl<'a, A: Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
     SpawnBuilderWithoutAddress<'a, A, F>
 {
     /// Specify an existing [`Addr`] to use with this Actor.
@@ -392,7 +385,7 @@ pub struct SpawnBuilderWithAddress<'a, A: Actor, F: FnOnce() -> A> {
     addr: Addr<A>,
 }
 
-impl<A: 'static + Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
+impl<A: Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
     SpawnBuilderWithAddress<'_, A, F>
 {
     /// Run this Actor on the current calling thread. This is a
@@ -437,7 +430,7 @@ impl System {
     /// which has to be further configured before spawning the actor.
     pub fn prepare<A>(&mut self, actor: A) -> SpawnBuilderWithoutAddress<A, impl FnOnce() -> A>
     where
-        A: Actor + 'static,
+        A: Actor,
     {
         SpawnBuilderWithoutAddress { system: self, factory: move || actor }
     }
@@ -449,8 +442,8 @@ impl System {
     /// configured before spawning the actor.
     pub fn prepare_fn<A, F>(&mut self, factory: F) -> SpawnBuilderWithoutAddress<A, F>
     where
-        A: Actor + 'static,
-        F: FnOnce() -> A + Send + 'static,
+        A: Actor,
+        F: FnOnce() -> A + Send,
     {
         SpawnBuilderWithoutAddress { system: self, factory }
     }
@@ -534,7 +527,10 @@ impl System {
         let system_handle = &self.handle;
         let mut context = Context::new(system_handle.clone(), addr.recipient.clone());
 
-        self.handle.registry.lock().push(RegistryEntry::CurrentThread(addr.control_tx.clone()));
+        self.handle
+            .registry
+            .lock()
+            .push(RegistryEntry::InPlace(addr.control_tx.clone(), thread::current()));
 
         match actor.started(&mut context) {
             Ok(()) => {
@@ -584,7 +580,7 @@ impl System {
                 .recv(&addr.priority_rx, |msg| match msg {
                     Ok(msg) => Received::Message(msg),
                     Err(RecvError::Disconnected) => {
-                        panic!("We keep message_tx alive through addr, should not happen.")
+                        panic!("We keep priority_tx alive through addr, should not happen.")
                     },
                 })
                 .recv(&addr.message_rx, |msg| match msg {
@@ -740,15 +736,27 @@ impl SystemHandle {
 
             registry
                 .drain(..)
-                .rev()
                 .enumerate()
+                .rev()
                 .filter_map(|(i, entry)| {
                     let actor_name = entry.name();
 
                     match entry {
-                        RegistryEntry::CurrentThread(_) => None,
+                        RegistryEntry::InPlace(_, _) => {
+                            debug!(
+                                "[{}] [{i}] skipping join of an actor running in-place: \
+                                 {actor_name}",
+                                self.name
+                            );
+                            None
+                        },
                         RegistryEntry::BackgroundThread(_control_addr, thread_handle) => {
                             if thread_handle.thread().id() == current_thread.id() {
+                                debug!(
+                                    "[{}] [{i}] skipping join of the actor thread currently \
+                                     executing SystemHandle::shutdown(): {actor_name}",
+                                    self.name,
+                                );
                                 return None;
                             }
 
@@ -847,25 +855,25 @@ impl SystemHandle {
 }
 
 enum RegistryEntry {
-    CurrentThread(Sender<Control>),
+    InPlace(Sender<Control>, thread::Thread),
     BackgroundThread(Sender<Control>, thread::JoinHandle<()>),
 }
 
 impl RegistryEntry {
     fn name(&self) -> String {
         match self {
-            RegistryEntry::CurrentThread(_) => {
-                thread::current().name().unwrap_or("unnamed").to_owned()
+            RegistryEntry::InPlace(_, thread_handle) => {
+                thread_handle.name().unwrap_or("unnamed").to_owned()
             },
-            RegistryEntry::BackgroundThread(_, thread_handle) => {
-                thread_handle.thread().name().unwrap_or("unnamed").to_owned()
+            RegistryEntry::BackgroundThread(_, join_handle) => {
+                join_handle.thread().name().unwrap_or("unnamed").to_owned()
             },
         }
     }
 
     fn control_addr(&mut self) -> &mut Sender<Control> {
         match self {
-            RegistryEntry::CurrentThread(control_addr) => control_addr,
+            RegistryEntry::InPlace(control_addr, _) => control_addr,
             RegistryEntry::BackgroundThread(control_addr, _) => control_addr,
         }
     }
@@ -892,15 +900,11 @@ pub trait Actor {
     /// Default capacity of actor's high-priority inbox unless overridden by `.with_capacity()`.
     const DEFAULT_CAPACITY_HIGH: usize = 5;
 
-    /// The primary function of this trait, allowing an actor to handle incoming messages of a certain type.
-    fn handle(
-        &mut self,
-        context: &mut Self::Context,
-        message: Self::Message,
-    ) -> Result<(), Self::Error>;
-
-    /// The name of the Actor - used only for logging/debugging.
-    fn name() -> &'static str;
+    /// The name of the Actor. Used by `tonari-actor` for logging/debugging.
+    /// Default implementation uses [`type_name()`].
+    fn name() -> &'static str {
+        type_name::<Self>()
+    }
 
     /// Determine priority of a `message` before it is sent to this actor.
     /// Default implementation returns [`Priority::Normal`].
@@ -912,6 +916,13 @@ pub trait Actor {
     fn started(&mut self, _context: &mut Self::Context) -> Result<(), Self::Error> {
         Ok(())
     }
+
+    /// The primary function of this trait, allowing an actor to handle incoming messages of a certain type.
+    fn handle(
+        &mut self,
+        context: &mut Self::Context,
+        message: Self::Message,
+    ) -> Result<(), Self::Error>;
 
     /// An optional callback when the Actor has been stopped.
     fn stopped(&mut self, _context: &mut Self::Context) -> Result<(), Self::Error> {
@@ -932,7 +943,6 @@ pub trait Actor {
     /// #    type Context = Context<Self::Message>;
     /// #    type Error = String;
     /// #    type Message = ();
-    /// #    fn name() -> &'static str { "TickingActor" }
     /// #    fn handle(&mut self, _: &mut Self::Context, _: ()) -> Result<(), String> { Ok(()) }
     ///     // ...
     ///
@@ -1152,6 +1162,9 @@ mod tests {
         type Message = usize;
 
         fn name() -> &'static str {
+            // The name is asserted against in tests, use a short stable one rather than the default
+            // implementation (`type_name()`)`, which is documented not to be stable and currently
+            // produces `tonari_actor::tests::TestActor`.
             "TestActor"
         }
 
@@ -1213,10 +1226,6 @@ mod tests {
             type Error = String;
             type Message = ();
 
-            fn name() -> &'static str {
-                "LocalActor"
-            }
-
             fn handle(&mut self, _: &mut Self::Context, _: ()) -> Result<(), String> {
                 Ok(())
             }
@@ -1249,10 +1258,6 @@ mod tests {
             type Context = Context<Self::Message>;
             type Error = String;
             type Message = Option<Instant>;
-
-            fn name() -> &'static str {
-                "TimeoutActor"
-            }
 
             fn handle(
                 &mut self,
@@ -1362,10 +1367,6 @@ mod tests {
                 Ok(())
             }
 
-            fn name() -> &'static str {
-                "PriorityActor"
-            }
-
             fn priority(message: &Self::Message) -> Priority {
                 if *message >= 10 {
                     Priority::High
@@ -1418,10 +1419,6 @@ mod tests {
                 println!("Event received!");
                 context.system_handle.shutdown().unwrap();
                 Ok(())
-            }
-
-            fn name() -> &'static str {
-                "recipient"
             }
         }
 
