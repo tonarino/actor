@@ -766,7 +766,7 @@ impl SystemHandle {
                 .count()
         };
 
-        info!("[{}] system finished shutting down in {:?}", self.name, shutdown_start.elapsed());
+        info!("[{}] system finished shutting down in {:?}.", self.name, shutdown_start.elapsed());
 
         if let Some(callback) = self.callbacks.postshutdown.as_ref() {
             info!("[{}] calling post-shutdown callback.", self.name);
