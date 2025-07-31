@@ -733,8 +733,8 @@ impl SystemHandle {
 
             registry
                 .drain(..)
-                .rev()
                 .enumerate()
+                .rev()
                 .filter_map(|(i, entry)| {
                     let actor_name = entry.name();
 
