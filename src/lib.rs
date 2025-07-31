@@ -527,7 +527,10 @@ impl System {
         let system_handle = &self.handle;
         let mut context = Context::new(system_handle.clone(), addr.recipient.clone());
 
-        self.handle.registry.lock().push(RegistryEntry::CurrentThread(addr.control_tx.clone()));
+        self.handle
+            .registry
+            .lock()
+            .push(RegistryEntry::InPlace(addr.control_tx.clone(), thread::current()));
 
         match actor.started(&mut context) {
             Ok(()) => {
@@ -739,7 +742,7 @@ impl SystemHandle {
                     let actor_name = entry.name();
 
                     match entry {
-                        RegistryEntry::CurrentThread(_) => {
+                        RegistryEntry::InPlace(_, _) => {
                             debug!(
                                 "[{}] [{i}] skipping join of an actor running in-place: \
                                  {actor_name}",
@@ -852,28 +855,25 @@ impl SystemHandle {
 }
 
 enum RegistryEntry {
-    // TODO(Matej): rename to "InPlace" or similar, "current thread" is too relative/vague.
-    CurrentThread(Sender<Control>),
+    InPlace(Sender<Control>, thread::Thread),
     BackgroundThread(Sender<Control>, thread::JoinHandle<()>),
 }
 
 impl RegistryEntry {
     fn name(&self) -> String {
         match self {
-            RegistryEntry::CurrentThread(_) => {
-                // TODO(Matej): this returns incorrect name when called from _another_ thread.
-                // To be correct, we likely need to store the `Thread` handle on the variant.
-                thread::current().name().unwrap_or("unnamed").to_owned()
+            RegistryEntry::InPlace(_, thread_handle) => {
+                thread_handle.name().unwrap_or("unnamed").to_owned()
             },
-            RegistryEntry::BackgroundThread(_, thread_handle) => {
-                thread_handle.thread().name().unwrap_or("unnamed").to_owned()
+            RegistryEntry::BackgroundThread(_, join_handle) => {
+                join_handle.thread().name().unwrap_or("unnamed").to_owned()
             },
         }
     }
 
     fn control_addr(&mut self) -> &mut Sender<Control> {
         match self {
-            RegistryEntry::CurrentThread(control_addr) => control_addr,
+            RegistryEntry::InPlace(control_addr, _) => control_addr,
             RegistryEntry::BackgroundThread(control_addr, _) => control_addr,
         }
     }
