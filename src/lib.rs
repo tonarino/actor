@@ -723,15 +723,18 @@ impl SystemHandle {
             let mut registry = self.registry.lock();
             debug!("[{}] joining {} actor threads.", self.name, registry.len());
 
-            // Stopping actors in the reverse order in which they were spawned.
-            // We send the Stop control message to all actors first so they can
+            // Stop actors in the reverse order in which they were spawned.
+            // Send the Stop control message to all actors first so they can
             // all shut down in parallel, so actors will be in the process of
             // stopping when we join the threads below.
             for entry in registry.iter_mut().rev() {
                 let actor_name = entry.name();
 
                 if let Err(e) = entry.control_addr().send(Control::Stop) {
-                    warn!("control channel is closed: {actor_name} ({e})");
+                    warn!(
+                        "Couldn't send Control::Stop to {actor_name} to shut it down: {e:#}. \
+                         Ignoring and proceeding."
+                    );
                 }
             }
 
