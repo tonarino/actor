@@ -1,7 +1,7 @@
 [package]
 name = "tonari-actor"
 description = "A minimalist actor framework aiming for high performance and simplicity."
-version = "0.10.0"
+version = "0.11.0"
 authors = ["Jake McGinty <me@jake.su>", "Matěj Laitl <matej@laitl.cz>", "Ryo Kawaguchi <ryo@kawagu.ch>", "Brian Schwind <brianmschwind@gmail.com>"]
 license = "MIT"
 edition = "2018"
