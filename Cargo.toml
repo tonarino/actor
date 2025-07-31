@@ -10,14 +10,21 @@ homepage = "https://github.com/tonarino/actor"
 readme = "README.md"
 keywords = ["actor", "threads"]
 
+[features]
+default = []
+async = ["flume/async", "dep:futures-lite", "dep:tokio"]
+
 [dependencies]
 dashmap = "6"
 # Make sure the eventual-fairness feature is disabled for priority queues.
 flume = { version = "0.10", default-features = false, features = ["select"] }
+futures-lite = { version = "2", default-features = false, optional = true }
 log = "0.4"
 parking_lot = "0.12"
+tokio = { version = "1", features = ["rt"], optional = true }
 
 [dev-dependencies]
+tokio = { version = "1", features = ["time"] }
 anyhow = "1"
 criterion = "0.4"
 ctrlc = "3.1"

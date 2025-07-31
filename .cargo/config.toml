@@ -1,0 +1,4 @@
+# See https://docs.rs/tokio/latest/tokio/index.html#unstable-features
+# Downstream crates also need to enable this for async support
+[build]
+rustflags = ["--cfg", "tokio_unstable"]
