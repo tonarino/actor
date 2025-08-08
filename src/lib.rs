@@ -428,7 +428,7 @@ impl System {
 
     /// Prepare an actor to be spawned. Returns a [`SpawnBuilderWithoutAddress`]
     /// which has to be further configured before spawning the actor.
-    pub fn prepare<A>(&mut self, actor: A) -> SpawnBuilderWithoutAddress<A, impl FnOnce() -> A>
+    pub fn prepare<A>(&mut self, actor: A) -> SpawnBuilderWithoutAddress<'_, A, impl FnOnce() -> A>
     where
         A: Actor,
     {
@@ -440,7 +440,7 @@ impl System {
     /// created on its own thread instead of the calling thread.
     /// Returns a [`SpawnBuilderWithoutAddress`] which has to be further
     /// configured before spawning the actor.
-    pub fn prepare_fn<A, F>(&mut self, factory: F) -> SpawnBuilderWithoutAddress<A, F>
+    pub fn prepare_fn<A, F>(&mut self, factory: F) -> SpawnBuilderWithoutAddress<'_, A, F>
     where
         A: Actor,
         F: FnOnce() -> A + Send,
