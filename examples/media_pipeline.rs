@@ -17,7 +17,7 @@ pub enum EncodedMediaFrame {
 
 mod actors {
     use crate::{EncodedMediaFrame, MediaFrame};
-    use anyhow::{bail, Error};
+    use anyhow::{Error, bail};
     use std::{thread, time::Duration};
     use tonari_actor::{Actor, Context, Recipient};
 

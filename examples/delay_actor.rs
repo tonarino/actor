@@ -2,8 +2,8 @@ use anyhow::Error;
 use env_logger::Env;
 use std::time::{Duration, Instant};
 use tonari_actor::{
-    timed::{RecipientExt, Timed, TimedContext},
     Actor, System,
+    timed::{RecipientExt, Timed, TimedContext},
 };
 
 struct FinalConsumer {

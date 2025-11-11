@@ -53,11 +53,11 @@
 //! Keep in mind that the event system has an additional requirement that the event type needs to be
 //! [`Clone`] and is not intended to be high-throughput. Run the `pub_sub` benchmark to get an idea.
 
-use flume::{select::SelectError, Receiver, RecvError, Selector, Sender};
+use flume::{Receiver, RecvError, Selector, Sender, select::SelectError};
 use log::*;
 use parking_lot::{Mutex, RwLock};
 use std::{
-    any::{type_name, TypeId},
+    any::{TypeId, type_name},
     collections::HashMap,
     fmt,
     ops::Deref,
@@ -398,9 +398,9 @@ impl<A: Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
 }
 
 impl<
-        A: 'static + Actor<Context = Context<<A as Actor>::Message>>,
-        F: FnOnce() -> A + Send + 'static,
-    > SpawnBuilderWithAddress<'_, A, F>
+    A: 'static + Actor<Context = Context<<A as Actor>::Message>>,
+    F: FnOnce() -> A + Send + 'static,
+> SpawnBuilderWithAddress<'_, A, F>
 {
     /// Spawn this Actor into a new thread managed by the [`System`].
     pub fn spawn(self) -> Result<Addr<A>, ActorError> {
@@ -428,7 +428,10 @@ impl System {
 
     /// Prepare an actor to be spawned. Returns a [`SpawnBuilderWithoutAddress`]
     /// which has to be further configured before spawning the actor.
-    pub fn prepare<A>(&mut self, actor: A) -> SpawnBuilderWithoutAddress<'_, A, impl FnOnce() -> A>
+    pub fn prepare<A>(
+        &mut self,
+        actor: A,
+    ) -> SpawnBuilderWithoutAddress<'_, A, impl FnOnce() -> A + use<A>>
     where
         A: Actor,
     {
@@ -785,11 +788,7 @@ impl SystemHandle {
 
         *self.system_state.write() = SystemState::Stopped;
 
-        if err_count > 0 {
-            Err(ActorError::ActorPanic)
-        } else {
-            Ok(())
-        }
+        if err_count > 0 { Err(ActorError::ActorPanic) } else { Ok(()) }
     }
 
     /// Subscribe given `recipient` to events of type `E`. See [`Context::subscribe()`].
@@ -810,10 +809,9 @@ impl SystemHandle {
         // to the subscriber list needs to be under the same write lock guard to avoid race
         // conditions between this method and `publish()` (to guarantee exactly-once delivery).
         if let Some(last_cached_value) = event_subscribers.last_value_cache.get(&TypeId::of::<E>())
+            && let Some(msg) = last_cached_value.downcast_ref::<E>()
         {
-            if let Some(msg) = last_cached_value.downcast_ref::<E>() {
-                recipient.send(msg.clone().into())?;
-            }
+            recipient.send(msg.clone().into())?;
         }
 
         event_subscribers.subscribe_recipient::<M, E>(recipient);
@@ -1368,11 +1366,7 @@ mod tests {
             }
 
             fn priority(message: &Self::Message) -> Priority {
-                if *message >= 10 {
-                    Priority::High
-                } else {
-                    Priority::Normal
-                }
+                if *message >= 10 { Priority::High } else { Priority::Normal }
             }
         }
 

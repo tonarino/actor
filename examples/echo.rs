@@ -21,7 +21,7 @@ use env_logger::Env;
 use log::trace;
 use std::{
     convert::TryInto,
-    io::{stdin, stdout, BufWriter, Read, Write},
+    io::{BufWriter, Read, Write, stdin, stdout},
     iter::repeat_n,
     sync::Arc,
 };
