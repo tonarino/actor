@@ -13,7 +13,7 @@ keywords = ["actor", "threads"]
 [dependencies]
 dashmap = "6"
 # Make sure the eventual-fairness feature is disabled for priority queues.
-flume = { version = "0.10", default-features = false, features = ["select"] }
+flume = { version = "0.11", default-features = false, features = ["select"] }
 log = "0.4"
 parking_lot = "0.12"
 
