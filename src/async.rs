@@ -29,7 +29,7 @@ use crate::{
 use flume::RecvError;
 use futures_lite::FutureExt;
 use log::{debug, trace};
-use std::{any::type_name, fmt, thread};
+use std::{any::type_name, fmt, future, thread};
 use tokio::runtime::LocalRuntime;
 
 /// The actor trait - async variant.
@@ -94,13 +94,12 @@ pub trait AsyncActor {
 /// a new address with either provided or default capacity.
 #[must_use = "You must call .with_addr(), .with_capacity(), or .with_default_capacity() to \
               configure this builder"]
-// TODO: perhaps F could/should be an async function?
-pub struct AsyncSpawnBuilderWithoutAddress<'a, A: AsyncActor, F: FnOnce() -> A> {
+pub struct AsyncSpawnBuilderWithoutAddress<'a, A: AsyncActor, F: IntoFuture<Output = A>> {
     system: &'a mut System,
     factory: F,
 }
 
-impl<'a, A: AsyncActor, F: FnOnce() -> A> AsyncSpawnBuilderWithoutAddress<'a, A, F> {
+impl<'a, A: AsyncActor, F: IntoFuture<Output = A>> AsyncSpawnBuilderWithoutAddress<'a, A, F> {
     /// Specify an existing [`Addr`] to use with this Actor.
     pub fn with_addr(self, addr: Addr<A::Message>) -> AsyncSpawnBuilderWithAddress<'a, A, F> {
         AsyncSpawnBuilderWithAddress { spawn_builder: self, addr }
@@ -123,16 +122,20 @@ impl<'a, A: AsyncActor, F: FnOnce() -> A> AsyncSpawnBuilderWithoutAddress<'a, A,
 }
 
 /// After having configured the builder with an address
-/// it is possible to create and run the actor either on a new thread with `spawn()`
-/// or on the current thread with `run_and_block()`.
-#[must_use = "You must call .spawn() or .run_and_block() to run an actor"]
-pub struct AsyncSpawnBuilderWithAddress<'a, A: AsyncActor, F: FnOnce() -> A> {
+/// it is possible to create and run the actor on a new thread with [`Self::spawn()`].
+///
+/// Not yet implemented for async actors: `run_and_block()` on the current thread.
+/// File an issue if you need it.
+#[must_use = "You must call .spawn() to run the actor"]
+pub struct AsyncSpawnBuilderWithAddress<'a, A: AsyncActor, F: IntoFuture<Output = A>> {
     spawn_builder: AsyncSpawnBuilderWithoutAddress<'a, A, F>,
     addr: Addr<A::Message>,
 }
 
-impl<A: AsyncActor, F: FnOnce() -> A + Send + 'static> AsyncSpawnBuilderWithAddress<'_, A, F> {
-    /// Spawn this Actor into a new thread managed by the [`System`].
+impl<A: AsyncActor, F: IntoFuture<Output = A> + Send + 'static>
+    AsyncSpawnBuilderWithAddress<'_, A, F>
+{
+    /// Spawn this async actor into a new thread managed by the [`System`].
     pub fn spawn(self) -> Result<Addr<A::Message>, ActorError> {
         let builder = self.spawn_builder;
         builder.system.spawn_async_fn_with_addr(builder.factory, self.addr.clone())?;
@@ -146,11 +149,11 @@ impl System {
     pub fn prepare_async<A>(
         &mut self,
         actor: A,
-    ) -> AsyncSpawnBuilderWithoutAddress<'_, A, impl FnOnce() -> A + use<A>>
+    ) -> AsyncSpawnBuilderWithoutAddress<'_, A, future::Ready<A>>
     where
         A: AsyncActor,
     {
-        AsyncSpawnBuilderWithoutAddress { system: self, factory: move || actor }
+        AsyncSpawnBuilderWithoutAddress { system: self, factory: future::ready(actor) }
     }
 
     /// Similar to [`Self::prepare_async()`], but an async actor factory is passed instead
@@ -164,7 +167,7 @@ impl System {
     ) -> AsyncSpawnBuilderWithoutAddress<'_, A, F>
     where
         A: AsyncActor,
-        F: FnOnce() -> A + Send,
+        F: IntoFuture<Output = A>,
     {
         AsyncSpawnBuilderWithoutAddress { system: self, factory }
     }
@@ -186,7 +189,7 @@ impl System {
         addr: Addr<A::Message>,
     ) -> Result<(), ActorError>
     where
-        F: FnOnce() -> A + Send + 'static,
+        F: IntoFuture<Output = A> + Send + 'static,
         A: AsyncActor,
     {
         // Hold the lock until the end of the function to prevent the race
@@ -207,8 +210,6 @@ impl System {
         let thread_handle = thread::Builder::new()
             .name(A::name().into())
             .spawn(move || {
-                let mut actor = factory();
-
                 let runtime = match LocalRuntime::new() {
                     Ok(runtime) => runtime,
                     Err(e) => {
@@ -223,6 +224,8 @@ impl System {
                 };
 
                 let main_task = async {
+                    let mut actor = factory.await;
+
                     if let Err(error) = actor.started(&mut context).await {
                         Self::report_error_shutdown(&system_handle, A::name(), "started()", error);
                         return;
