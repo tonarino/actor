@@ -16,6 +16,8 @@
 //!
 //! TODO explain tokio feature flags and that downstreams may need to enable more.
 //!
+//! TODO lacking feature: block on
+//!
 //! [^tokio]: TODO explain that any runtime is sufficient (no dependency on tokio-specific features)
 //!     we only need to spawn _some_ runtime in the actor loop. tokio was just a pragmatic choice.
 //!     we could add support for alternative ones, even runtime-configurable.
@@ -32,7 +34,7 @@ use tokio::runtime::LocalRuntime;
 
 /// The actor trait - async variant.
 // Ad. the #[allow]: using `async` fn in a trait doesn't allow us to specify `Send` (or other)
-// bounds, but we don't really need any bounds, because
+// bounds, but we don't really need any bounds, because TODO - we use single-threaded runtime
 #[allow(async_fn_in_trait)]
 pub trait AsyncActor {
     /// The expected type of a message to be received.
@@ -87,15 +89,95 @@ pub trait AsyncActor {
     }
 }
 
+/// A builder for configuring [`AsyncActor`] spawning.
+/// You can specify your own [`Addr`] for the Actor, or let the system create
+/// a new address with either provided or default capacity.
+#[must_use = "You must call .with_addr(), .with_capacity(), or .with_default_capacity() to \
+              configure this builder"]
+// TODO: perhaps F could/should be an async function?
+pub struct AsyncSpawnBuilderWithoutAddress<'a, A: AsyncActor, F: FnOnce() -> A> {
+    system: &'a mut System,
+    factory: F,
+}
+
+impl<'a, A: AsyncActor, F: FnOnce() -> A> AsyncSpawnBuilderWithoutAddress<'a, A, F> {
+    /// Specify an existing [`Addr`] to use with this Actor.
+    pub fn with_addr(self, addr: Addr<A::Message>) -> AsyncSpawnBuilderWithAddress<'a, A, F> {
+        AsyncSpawnBuilderWithAddress { spawn_builder: self, addr }
+    }
+
+    /// Specify a capacity for the actor's receiving channel. Accepts [`Capacity`] or [`usize`].
+    pub fn with_capacity(
+        self,
+        capacity: impl Into<Capacity>,
+    ) -> AsyncSpawnBuilderWithAddress<'a, A, F> {
+        let addr = A::addr_with_capacity(capacity);
+        AsyncSpawnBuilderWithAddress { spawn_builder: self, addr }
+    }
+
+    /// Use the default capacity for the actor's receiving channel.
+    pub fn with_default_capacity(self) -> AsyncSpawnBuilderWithAddress<'a, A, F> {
+        let addr = A::addr();
+        AsyncSpawnBuilderWithAddress { spawn_builder: self, addr }
+    }
+}
+
+/// After having configured the builder with an address
+/// it is possible to create and run the actor either on a new thread with `spawn()`
+/// or on the current thread with `run_and_block()`.
+#[must_use = "You must call .spawn() or .run_and_block() to run an actor"]
+pub struct AsyncSpawnBuilderWithAddress<'a, A: AsyncActor, F: FnOnce() -> A> {
+    spawn_builder: AsyncSpawnBuilderWithoutAddress<'a, A, F>,
+    addr: Addr<A::Message>,
+}
+
+impl<A: AsyncActor, F: FnOnce() -> A + Send + 'static> AsyncSpawnBuilderWithAddress<'_, A, F> {
+    /// Spawn this Actor into a new thread managed by the [`System`].
+    pub fn spawn(self) -> Result<Addr<A::Message>, ActorError> {
+        let builder = self.spawn_builder;
+        builder.system.spawn_async_fn_with_addr(builder.factory, self.addr.clone())?;
+        Ok(self.addr)
+    }
+}
+
 impl System {
+    /// Prepare an async actor to be spawned. Returns an [`AsyncSpawnBuilderWithoutAddress`]
+    /// which has to be further configured before spawning the actor.
+    pub fn prepare_async<A>(
+        &mut self,
+        actor: A,
+    ) -> AsyncSpawnBuilderWithoutAddress<'_, A, impl FnOnce() -> A + use<A>>
+    where
+        A: AsyncActor,
+    {
+        AsyncSpawnBuilderWithoutAddress { system: self, factory: move || actor }
+    }
+
+    /// Similar to [`Self::prepare_async()`], but an async actor factory is passed instead
+    /// of an [`AsyncActor`] itself. This is used when an actor needs to be
+    /// created on its own thread instead of the calling thread.
+    /// Returns an [`AsyncSpawnBuilderWithoutAddress`] which has to be further
+    /// configured before spawning the actor.
+    pub fn prepare_async_fn<A, F>(
+        &mut self,
+        factory: F,
+    ) -> AsyncSpawnBuilderWithoutAddress<'_, A, F>
+    where
+        A: AsyncActor,
+        F: FnOnce() -> A + Send,
+    {
+        AsyncSpawnBuilderWithoutAddress { system: self, factory }
+    }
+
+    /// Spawn an [`AsyncActor`] in the system, returning its address when successful.
+    /// This address is created by the system and uses a default capacity.
+    /// If you need to customize the address see [`Self::prepare_async()`] or
+    /// [`Self::prepare_async_fn()`].
     pub fn spawn_async<A>(&mut self, actor: A) -> Result<Addr<A::Message>, ActorError>
     where
         A: AsyncActor + Send + 'static,
     {
-        let addr = A::addr();
-        let factory = move || actor;
-        self.spawn_async_fn_with_addr(factory, addr.clone())?;
-        Ok(addr)
+        self.prepare_async(actor).with_default_capacity().spawn()
     }
 
     fn spawn_async_fn_with_addr<F, A>(

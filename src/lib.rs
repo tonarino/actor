@@ -392,10 +392,10 @@ impl<'a, A: Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
     }
 }
 
-#[must_use = "You must call .spawn() or .run_and_block() to run an actor"]
 /// After having configured the builder with an address
 /// it is possible to create and run the actor either on a new thread with `spawn()`
 /// or on the current thread with `run_and_block()`.
+#[must_use = "You must call .spawn() or .run_and_block() to run an actor"]
 pub struct SpawnBuilderWithAddress<'a, A: Actor, F: FnOnce() -> A> {
     spawn_builder: SpawnBuilderWithoutAddress<'a, A, F>,
     addr: Addr<A::Message>,
@@ -452,7 +452,7 @@ impl System {
         SpawnBuilderWithoutAddress { system: self, factory: move || actor }
     }
 
-    /// Similar to `prepare`, but an actor factory is passed instead
+    /// Similar to [`Self::prepare()`], but an actor factory is passed instead
     /// of an [`Actor`] itself. This is used when an actor needs to be
     /// created on its own thread instead of the calling thread.
     /// Returns a [`SpawnBuilderWithoutAddress`] which has to be further
@@ -467,7 +467,7 @@ impl System {
 
     /// Spawn a normal [`Actor`] in the system, returning its address when successful.
     /// This address is created by the system and uses a default capacity.
-    /// If you need to customize the address see [`prepare`] or [`prepare_fn`] above.
+    /// If you need to customize the address see [`Self::prepare()`] or [`Self::prepare_fn()`].
     pub fn spawn<A>(&mut self, actor: A) -> Result<Addr<A::Message>, ActorError>
     where
         A: Actor<Context = Context<<A as Actor>::Message>> + Send + 'static,
