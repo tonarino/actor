@@ -392,9 +392,9 @@ impl<'a, A: Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
 }
 
 /// After having configured the builder with an address
-/// it is possible to create and run the actor either on a new thread with `spawn()`
-/// or on the current thread with `run_and_block()`.
-#[must_use = "You must call .spawn() or .run_and_block() to run an actor"]
+/// it is possible to create and run the actor either on a new thread with [`Self::spawn()`]
+/// or on the current thread with [`Self::run_and_block()`].
+#[must_use = "You must call .spawn() or .run_and_block() to run the actor"]
 pub struct SpawnBuilderWithAddress<'a, A: Actor, F: FnOnce() -> A> {
     spawn_builder: SpawnBuilderWithoutAddress<'a, A, F>,
     addr: Addr<A::Message>,
