@@ -4,7 +4,7 @@ description = "A minimalist actor framework aiming for high performance and simp
 version = "0.11.0"
 authors = ["Jake McGinty <me@jake.su>", "Matěj Laitl <matej@laitl.cz>", "Ryo Kawaguchi <ryo@kawagu.ch>", "Brian Schwind <brianmschwind@gmail.com>"]
 license = "MIT"
-edition = "2018"
+edition = "2024"
 repository = "https://github.com/tonarino/actor"
 homepage = "https://github.com/tonarino/actor"
 readme = "README.md"
@@ -13,15 +13,15 @@ keywords = ["actor", "threads"]
 [dependencies]
 dashmap = "6"
 # Make sure the eventual-fairness feature is disabled for priority queues.
-flume = { version = "0.10", default-features = false, features = ["select"] }
+flume = { version = "0.11", default-features = false, features = ["select"] }
 log = "0.4"
 parking_lot = "0.12"
 
 [dev-dependencies]
 anyhow = "1"
-criterion = "0.4"
+criterion = "0.7"
 ctrlc = "3.1"
-env_logger = "0.10"
+env_logger = "0.11"
 num_cpus = "1"
 
 [[bench]]

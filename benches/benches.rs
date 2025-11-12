@@ -1,5 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
-use std::time::Duration;
+use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
+use std::{hint::black_box, time::Duration};
 use tonari_actor::{Actor, Addr, Context, System};
 
 struct ChainLink {
