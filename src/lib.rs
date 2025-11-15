@@ -307,8 +307,8 @@ impl<M> Deref for Context<M> {
     }
 }
 
-/// A [`Context`] without the [`Context::set_deadline()`] functionality. Used by [`timed`]
-/// actors. [`Context`] dereferences to this bare variant for `system_handle` and `myself`
+/// A [`Context`] without the [`Context::set_deadline()`] functionality. Used by [`timed`] and
+/// [`async`] actors. [`Context`] dereferences to this bare variant for `system_handle` and `myself`
 /// fields.
 pub struct BareContext<M> {
     pub system_handle: SystemHandle,
