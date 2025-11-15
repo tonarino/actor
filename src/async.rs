@@ -347,7 +347,7 @@ mod tests {
 
         async fn started(&mut self, _: &mut Context<TestMessage>) -> Result<(), Error> {
             debug!("AsyncActor started hook");
-            self.recorder.send(TestMessage::Event("started".into()))?;
+            self.recorder.send(TestMessage::Event("started"))?;
             Ok(())
         }
 
@@ -358,19 +358,19 @@ mod tests {
         ) -> Result<(), Error> {
             self.recorder.send(message.clone())?;
 
-            if message == TestMessage::DelayedTask() {
+            if message == TestMessage::DelayedTask {
                 let recorder = self.recorder.clone();
                 tokio::spawn(async move {
                     debug!("delayed task started");
                     tokio::time::sleep(Duration::from_millis(10)).await;
 
-                    recorder.send(TestMessage::Event("delayed task finished".into()))?;
+                    recorder.send(TestMessage::Event("delayed task finished"))?;
                     debug!("delayed task finished");
                     Ok::<(), Error>(())
                 });
             }
 
-            if message == TestMessage::DelayedShutdown() {
+            if message == TestMessage::DelayedShutdown {
                 let system_handle = context.system_handle.clone();
                 tokio::spawn(async move {
                     debug!("delayed shutdown started");
@@ -386,18 +386,18 @@ mod tests {
 
         async fn stopped(&mut self, _: &mut Context<TestMessage>) -> Result<(), Error> {
             trace!("AsyncActor stopped hook");
-            self.recorder.send(TestMessage::Event("stopped".into()))?;
+            self.recorder.send(TestMessage::Event("stopped"))?;
             Ok(())
         }
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum TestMessage {
-        Event(String),
+        Event(&'static str),
         HighPrio(usize),
         NormalPrio(usize),
-        DelayedTask(),
-        DelayedShutdown(),
+        DelayedTask,
+        DelayedShutdown,
     }
 
     struct SyncRecorder {
@@ -426,7 +426,7 @@ mod tests {
             .try_init()
             .ok();
 
-        let mut system = System::new("async_priorities_system");
+        let mut system = System::new("async priorities");
 
         let received = Arc::new(Mutex::new(Vec::new()));
         let recorder_actor = SyncRecorder { received: Arc::clone(&received) };
@@ -435,14 +435,58 @@ mod tests {
         let async_actor = AsyncTestActor { recorder: recorder_addr.recipient() };
         let async_addr = system.spawn_async(async_actor).unwrap();
 
-        async_addr.send(TestMessage::DelayedTask()).unwrap();
-        async_addr.send(TestMessage::DelayedShutdown()).unwrap();
+        async_addr.send(TestMessage::DelayedTask).unwrap();
+        async_addr.send(TestMessage::DelayedShutdown).unwrap();
         async_addr.send(TestMessage::NormalPrio(1)).unwrap();
         async_addr.send(TestMessage::NormalPrio(2)).unwrap();
         async_addr.send(TestMessage::HighPrio(3)).unwrap();
         async_addr.send(TestMessage::HighPrio(4)).unwrap();
 
-        thread::sleep(Duration::from_millis(5));
-        system.shutdown().unwrap()
+        system.run().unwrap();
+
+        let received = Arc::into_inner(received)
+            .expect("arc has a single reference at this point")
+            .into_inner()
+            .expect("Mutex should not be poisoned");
+        assert_eq!(
+            received,
+            [
+                TestMessage::Event("started"),
+                TestMessage::HighPrio(3),
+                TestMessage::HighPrio(4),
+                TestMessage::DelayedTask,
+                TestMessage::DelayedShutdown,
+                TestMessage::NormalPrio(1),
+                TestMessage::NormalPrio(2),
+                TestMessage::Event("delayed task finished")
+            ]
+        );
+    }
+
+    #[test]
+    fn async_error() {
+        // Logger might have been initialized by another test, so just try on best-effort basis.
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace"))
+            .try_init()
+            .ok();
+
+        struct ErroringActor;
+
+        impl AsyncActor for ErroringActor {
+            type Error = String;
+            type Message = ();
+
+            async fn handle(&mut self, _c: &mut Context<()>, _m: ()) -> Result<(), String> {
+                Err(String::from("Raising an error"))
+            }
+        }
+
+        let mut system = System::new("async error");
+        let addr = system.spawn_async(ErroringActor).unwrap();
+        addr.send(()).unwrap();
+
+        // The Error isn't really propagated here, but at least we can test that the system doesn't
+        // continue running (i.e. this test finishes quickly, doesn't hang here indefinitely).
+        system.run().unwrap();
     }
 }
