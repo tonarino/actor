@@ -256,18 +256,19 @@ pub struct SystemHandle {
 }
 
 /// An execution context for a specific actor. Specifically, this is useful for managing
-/// the lifecycle of itself (through the `myself` field) and other actors via the `SystemHandle`
-/// provided. A time-based deadline for receiving a message can be set using
-/// [`Self::set_deadline()`] and friends.
+/// the lifecycle of itself (through the `myself` field) and other actors via the [`SystemHandle`]
+/// provided using a dereference to [`BareContext`].
+///
+/// A time-based deadline for receiving a message can be set using [`Self::set_deadline()`] and
+/// friends.
 pub struct Context<M> {
-    pub system_handle: SystemHandle,
-    pub myself: Recipient<M>,
+    bare: BareContext<M>,
     receive_deadline: Option<Instant>,
 }
 
 impl<M> Context<M> {
     fn new(system_handle: SystemHandle, myself: Recipient<M>) -> Self {
-        Self { system_handle, myself, receive_deadline: None }
+        Self { bare: BareContext { system_handle, myself }, receive_deadline: None }
     }
 
     /// Get the deadline previously set using [`Self::set_deadline()`] or [`Self::set_timeout()`].
@@ -288,16 +289,31 @@ impl<M> Context<M> {
     pub fn set_timeout(&mut self, timeout: Option<Duration>) {
         self.set_deadline(timeout.map(|t| Instant::now() + t));
     }
+}
 
+impl<M> Deref for Context<M> {
+    type Target = BareContext<M>;
+
+    fn deref(&self) -> &BareContext<M> {
+        &self.bare
+    }
+}
+
+/// A [`Context`] without the [`Context::set_deadline()`] functionality. Used by [`timed`]
+/// actors. [`Context`] dereferences to this bare variant for `system_handle` and `myself`
+/// fields.
+pub struct BareContext<M> {
+    pub system_handle: SystemHandle,
+    pub myself: Recipient<M>,
+}
+
+impl<M: 'static> BareContext<M> {
     /// Subscribe current actor to event of type `E`. This is part of the event system. You don't
     /// need to call this method to receive direct messages sent using [`Addr`] and [`Recipient`].
     ///
     /// Note that subscribing twice to the same event would result in duplicate events -- no
     /// de-duplication of subscriptions is performed.
-    pub fn subscribe<E: Event + Into<M>>(&self)
-    where
-        M: 'static,
-    {
+    pub fn subscribe<E: Event + Into<M>>(&self) {
         self.system_handle.subscribe_recipient::<M, E>(self.myself.clone());
     }
 
@@ -310,11 +326,16 @@ impl<M> Context<M> {
     ///
     /// This method may fail if it is not possible to send the latest event. In this case it is
     /// guaranteed that the subscription did not take place. You can safely try again.
-    pub fn subscribe_and_receive_latest<E: Event + Into<M>>(&self) -> Result<(), SendError>
-    where
-        M: 'static,
-    {
+    pub fn subscribe_and_receive_latest<E: Event + Into<M>>(&self) -> Result<(), SendError> {
         self.system_handle.subscribe_and_receive_latest::<M, E>(self.myself.clone())
+    }
+}
+
+// #[derive(Clone)] adds Clone bound to M, which is not necessary.
+// https://github.com/rust-lang/rust/issues/26925
+impl<M> Clone for BareContext<M> {
+    fn clone(&self) -> Self {
+        Self { system_handle: self.system_handle.clone(), myself: self.myself.clone() }
     }
 }
 

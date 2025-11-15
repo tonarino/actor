@@ -16,7 +16,7 @@
 //!
 //! See `delay_actor.rs` example for usage.
 
-use crate::{Actor, Context, Event, Priority, Recipient, SendError, SystemHandle};
+use crate::{Actor, BareContext, Context, Event, Priority, Recipient, SendError};
 use std::{
     cmp::Ordering,
     collections::BinaryHeap,
@@ -80,37 +80,38 @@ impl<M> RecipientExt<M> for Recipient<TimedMessage<M>> {
 }
 
 /// A [`Context`] variant available to actors wrapped by the [`Timed`] actor wrapper.
-pub struct TimedContext<M> {
-    pub system_handle: SystemHandle,
-    pub myself: Recipient<TimedMessage<M>>,
-}
+/// Wraps and dereferences to [`BareContext`] with the message wrapped in [`TimedMessage`].
+pub struct TimedContext<M>(BareContext<TimedMessage<M>>);
 
 impl<M> TimedContext<M> {
     fn from_context(context: &Context<TimedMessage<M>>) -> Self {
-        TimedContext {
-            system_handle: context.system_handle.clone(),
-            myself: context.myself.clone(),
-        }
+        Self(context.deref().clone())
     }
+}
 
+impl<M: 'static> TimedContext<M> {
     /// Subscribe current actor to event of type `E`. Events will be delivered as instant messages.
-    /// See [`crate::Context::subscribe()`].
-    pub fn subscribe<E: Event + Into<M>>(&self)
-    where
-        M: 'static,
-    {
-        // The recipient() call allows conversion from M to TimedMessage<M>.
+    /// A variant of [`BareContext::subscribe()`] that performs one extra message conversion:
+    /// `E` -> `M` -> `TimedMessage<M>`.
+    pub fn subscribe<E: Event + Into<M>>(&self) {
+        // The recipient() call performs conversion from `M` to an immediate `TimedMessage<M>`.
         self.system_handle.subscribe_recipient::<M, E>(self.myself.recipient());
     }
 
     /// Subscribe current actor to event of type `E` and send the last cached event to it.
     /// Events will be delivered as instant messages.
-    /// See [`crate::Context::subscribe()`].
-    pub fn subscribe_and_receive_latest<E: Event + Into<M>>(&self) -> Result<(), SendError>
-    where
-        M: 'static,
-    {
+    /// A variant of [`BareContext::subscribe_and_receive_latest()`] that performs one extra message
+    /// conversion: `E` -> `M` -> `TimedMessage<M>`.
+    pub fn subscribe_and_receive_latest<E: Event + Into<M>>(&self) -> Result<(), SendError> {
         self.system_handle.subscribe_and_receive_latest::<M, E>(self.myself.recipient())
+    }
+}
+
+impl<M> Deref for TimedContext<M> {
+    type Target = BareContext<TimedMessage<M>>;
+
+    fn deref(&self) -> &BareContext<TimedMessage<M>> {
+        &self.0
     }
 }
 
