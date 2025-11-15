@@ -14,7 +14,7 @@ use tokio::{
     task::JoinHandle,
     time::{Instant, sleep_until, timeout},
 };
-use tonari_actor::{Actor, Context, Recipient, System, r#async::AsyncActor};
+use tonari_actor::{Actor, BareContext, Context, Recipient, System, r#async::AsyncActor};
 
 enum CollectorTask {
     Crawl { hosts: Vec<String> },
@@ -33,7 +33,7 @@ impl AsyncActor for Crawler {
 
     async fn handle(
         &mut self,
-        _context: &mut Context<CollectorTask>,
+        _context: &BareContext<CollectorTask>,
         message: CollectorTask,
     ) -> Result<()> {
         match message {
@@ -123,7 +123,7 @@ impl AsyncActor for Sorter {
 
     async fn handle(
         &mut self,
-        context: &mut Context<SorterMessage>,
+        context: &BareContext<SorterMessage>,
         message: SorterMessage,
     ) -> Result<()> {
         match message {
