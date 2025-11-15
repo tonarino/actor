@@ -23,8 +23,8 @@
 //!     we could add support for alternative ones, even runtime-configurable.
 
 use crate::{
-    ActorError, Addr, Capacity, Context, Control, Priority, RegistryEntry, System, SystemHandle,
-    SystemState,
+    ActorError, Addr, BareContext, Capacity, Control, Priority, RegistryEntry, System,
+    SystemHandle, SystemState,
 };
 use flume::RecvError;
 use futures_lite::FutureExt;
@@ -60,19 +60,19 @@ pub trait AsyncActor {
     }
 
     /// An optional callback when the Actor has been started.
-    async fn started(&mut self, _context: &mut Context<Self::Message>) -> Result<(), Self::Error> {
+    async fn started(&mut self, _context: &BareContext<Self::Message>) -> Result<(), Self::Error> {
         Ok(())
     }
 
     /// The primary function of this trait, allowing an actor to handle incoming messages of a certain type.
     async fn handle(
         &mut self,
-        context: &mut Context<Self::Message>,
+        context: &BareContext<Self::Message>,
         message: Self::Message,
     ) -> Result<(), Self::Error>;
 
     /// An optional callback when the Actor has been stopped.
-    async fn stopped(&mut self, _context: &mut Context<Self::Message>) -> Result<(), Self::Error> {
+    async fn stopped(&mut self, _context: &BareContext<Self::Message>) -> Result<(), Self::Error> {
         Ok(())
     }
 
@@ -203,8 +203,8 @@ impl System {
         }
 
         let system_handle = self.handle.clone();
-        // TODO(Matej): async actors likely should have a different context?
-        let mut context = Context::new(system_handle.clone(), addr.recipient.clone());
+        let context =
+            BareContext { system_handle: system_handle.clone(), myself: addr.recipient.clone() };
         let control_addr = addr.control_tx.clone();
 
         let thread_handle = thread::Builder::new()
@@ -226,14 +226,13 @@ impl System {
                 let main_task = async {
                     let mut actor = factory.await;
 
-                    if let Err(error) = actor.started(&mut context).await {
+                    if let Err(error) = actor.started(&context).await {
                         Self::report_error_shutdown(&system_handle, A::name(), "started()", error);
                         return;
                     }
                     debug!("[{}] started async actor: {}", system_handle.name, A::name());
 
-                    Self::run_async_actor_select_loop(actor, addr, &mut context, &system_handle)
-                        .await
+                    Self::run_async_actor_select_loop(actor, addr, &context, &system_handle).await
                 };
 
                 runtime.block_on(main_task)
@@ -252,7 +251,7 @@ impl System {
     async fn run_async_actor_select_loop<A>(
         mut actor: A,
         addr: Addr<A::Message>,
-        context: &mut Context<A::Message>,
+        context: &BareContext<A::Message>,
         system_handle: &SystemHandle,
     ) where
         A: AsyncActor,
@@ -323,7 +322,7 @@ impl System {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Actor, Recipient};
+    use crate::{Actor, Context, Recipient};
     use anyhow::Error;
     use std::{
         sync::{Arc, Mutex},
@@ -345,7 +344,7 @@ mod tests {
             }
         }
 
-        async fn started(&mut self, _: &mut Context<TestMessage>) -> Result<(), Error> {
+        async fn started(&mut self, _: &BareContext<TestMessage>) -> Result<(), Error> {
             debug!("AsyncActor started hook");
             self.recorder.send(TestMessage::Event("started"))?;
             Ok(())
@@ -353,7 +352,7 @@ mod tests {
 
         async fn handle(
             &mut self,
-            context: &mut Context<TestMessage>,
+            context: &BareContext<TestMessage>,
             message: TestMessage,
         ) -> Result<(), Error> {
             self.recorder.send(message.clone())?;
@@ -384,7 +383,7 @@ mod tests {
             Ok(())
         }
 
-        async fn stopped(&mut self, _: &mut Context<TestMessage>) -> Result<(), Error> {
+        async fn stopped(&mut self, _: &BareContext<TestMessage>) -> Result<(), Error> {
             trace!("AsyncActor stopped hook");
             self.recorder.send(TestMessage::Event("stopped"))?;
             Ok(())
@@ -476,7 +475,7 @@ mod tests {
             type Error = String;
             type Message = ();
 
-            async fn handle(&mut self, _c: &mut Context<()>, _m: ()) -> Result<(), String> {
+            async fn handle(&mut self, _c: &BareContext<()>, _m: ()) -> Result<(), String> {
                 Err(String::from("Raising an error"))
             }
         }
