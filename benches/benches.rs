@@ -1,9 +1,11 @@
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
-use std::{hint::black_box, time::Duration};
+use flume::Receiver;
+use std::hint::black_box;
 use tonari_actor::{Actor, Addr, Context, System};
 
 struct ChainLink {
     next: Addr<u64>,
+    finished: flume::Sender<()>,
 }
 
 impl Actor for ChainLink {
@@ -13,61 +15,70 @@ impl Actor for ChainLink {
 
     fn handle(
         &mut self,
-        context: &mut Self::Context,
+        _context: &mut Self::Context,
         message: Self::Message,
     ) -> Result<(), Self::Error> {
         if message > 0 {
             self.next.send(message - 1).unwrap();
         } else {
-            context.system_handle.shutdown().unwrap();
+            self.finished.try_send(()).unwrap();
         }
 
         Ok(())
     }
 }
 
-fn make_chain(num_actors: usize) -> (System, Addr<u64>, Addr<u64>) {
+fn make_chain(num_actors: usize) -> (System, Addr<u64>, Receiver<()>) {
     let mut system = System::new("chain");
+    let (finish_sender, finish_receiver) = flume::bounded(1);
 
-    let addr = ChainLink::addr();
-    let mut next = addr.clone();
-    for _ in 0..num_actors {
-        next = system.spawn(ChainLink { next }).unwrap();
+    let first = ChainLink::addr();
+    let mut previous = first.clone();
+
+    // Spawn all actors except the first one.
+    for _ in 1..num_actors {
+        previous =
+            system.spawn(ChainLink { next: previous, finished: finish_sender.clone() }).unwrap();
     }
 
-    (system, next, addr)
+    system
+        .prepare(ChainLink { next: previous, finished: finish_sender })
+        .with_addr(first.clone())
+        .spawn()
+        .unwrap();
+
+    (system, first, finish_receiver)
 }
 
 fn spawn_bench(c: &mut Criterion) {
     let mut spawn = c.benchmark_group("spawn");
-    spawn.throughput(Throughput::Elements(1));
-    spawn.measurement_time(Duration::from_secs(10));
-    spawn.bench_function("spawn 1", |b| b.iter(|| make_chain(black_box(1))));
-    spawn.bench_function("spawn 10", |b| b.iter(|| make_chain(black_box(10))));
-    spawn.bench_function("spawn 50", |b| b.iter(|| make_chain(black_box(50))));
+
+    for num_actors in [1, 10, 50] {
+        spawn.throughput(Throughput::Elements(num_actors));
+        spawn.bench_function(format!("spawn & tear down {num_actors}"), |b| {
+            b.iter(|| make_chain(black_box(num_actors as usize)))
+        });
+    }
 }
 
-fn run_chain((mut system, start, end): (System, Addr<u64>, Addr<u64>)) {
-    start.send(1000).unwrap();
-    system.prepare(ChainLink { next: start }).with_addr(end).run_and_block().unwrap();
+fn run_chain((system, first, finish_receiver): (System, Addr<u64>, Receiver<()>)) -> System {
+    first.send(1000).unwrap();
+    finish_receiver.recv().unwrap();
+
+    // Pass the system out. That way its destructor that joins actor threads is not timed.
+    system
 }
 
 fn circular_bench(c: &mut Criterion) {
     let mut circular = c.benchmark_group("circular");
-    circular.measurement_time(Duration::from_secs(10));
     circular.throughput(Throughput::Elements(1000));
-    circular.bench_function("circular (2 actors)", |b| {
-        b.iter_batched(|| make_chain(1), run_chain, BatchSize::SmallInput)
-    });
-    circular.bench_function("circular (native CPU count - 1)", |b| {
-        b.iter_batched(|| make_chain(num_cpus::get() - 2), run_chain, BatchSize::SmallInput)
-    });
-    circular.bench_function("circular (native CPU count)", |b| {
-        b.iter_batched(|| make_chain(num_cpus::get() - 1), run_chain, BatchSize::SmallInput)
-    });
-    circular.bench_function("circular (50 actors)", |b| {
-        b.iter_batched(|| make_chain(49), run_chain, BatchSize::SmallInput)
-    });
+
+    let num_cpus = num_cpus::get();
+    for num_actors in [1, 2, 3, num_cpus - 1, num_cpus, 50] {
+        circular.bench_function(format!("circular ({num_actors} actors)"), |b| {
+            b.iter_batched(|| make_chain(num_actors), run_chain, BatchSize::SmallInput)
+        });
+    }
 }
 
 criterion_group!(benches, spawn_bench, circular_bench);
