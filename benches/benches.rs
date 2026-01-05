@@ -38,39 +38,37 @@ fn make_chain(num_actors: usize) -> (System, Addr<u64>, Addr<u64>) {
     (system, next, addr)
 }
 
+fn spawn_bench(c: &mut Criterion) {
+    let mut spawn = c.benchmark_group("spawn");
+    spawn.throughput(Throughput::Elements(1));
+    spawn.measurement_time(Duration::from_secs(10));
+    spawn.bench_function("spawn 1", |b| b.iter(|| make_chain(black_box(1))));
+    spawn.bench_function("spawn 10", |b| b.iter(|| make_chain(black_box(10))));
+    spawn.bench_function("spawn 50", |b| b.iter(|| make_chain(black_box(50))));
+}
+
 fn run_chain((mut system, start, end): (System, Addr<u64>, Addr<u64>)) {
     start.send(1000).unwrap();
     system.prepare(ChainLink { next: start }).with_addr(end).run_and_block().unwrap();
 }
 
-fn criterion_benchmark(c: &mut Criterion) {
-    {
-        let mut spawn = c.benchmark_group("spawn");
-        spawn.throughput(Throughput::Elements(1));
-        spawn.measurement_time(Duration::from_secs(10));
-        spawn.bench_function("spawn 1", |b| b.iter(|| make_chain(black_box(1))));
-        spawn.bench_function("spawn 10", |b| b.iter(|| make_chain(black_box(10))));
-        spawn.bench_function("spawn 50", |b| b.iter(|| make_chain(black_box(50))));
-    }
-
-    {
-        let mut circular = c.benchmark_group("circular");
-        circular.measurement_time(Duration::from_secs(10));
-        circular.throughput(Throughput::Elements(1000));
-        circular.bench_function("circular (2 actors)", |b| {
-            b.iter_batched(|| make_chain(1), run_chain, BatchSize::SmallInput)
-        });
-        circular.bench_function("circular (native CPU count - 1)", |b| {
-            b.iter_batched(|| make_chain(num_cpus::get() - 2), run_chain, BatchSize::SmallInput)
-        });
-        circular.bench_function("circular (native CPU count)", |b| {
-            b.iter_batched(|| make_chain(num_cpus::get() - 1), run_chain, BatchSize::SmallInput)
-        });
-        circular.bench_function("circular (50 actors)", |b| {
-            b.iter_batched(|| make_chain(49), run_chain, BatchSize::SmallInput)
-        });
-    }
+fn circular_bench(c: &mut Criterion) {
+    let mut circular = c.benchmark_group("circular");
+    circular.measurement_time(Duration::from_secs(10));
+    circular.throughput(Throughput::Elements(1000));
+    circular.bench_function("circular (2 actors)", |b| {
+        b.iter_batched(|| make_chain(1), run_chain, BatchSize::SmallInput)
+    });
+    circular.bench_function("circular (native CPU count - 1)", |b| {
+        b.iter_batched(|| make_chain(num_cpus::get() - 2), run_chain, BatchSize::SmallInput)
+    });
+    circular.bench_function("circular (native CPU count)", |b| {
+        b.iter_batched(|| make_chain(num_cpus::get() - 1), run_chain, BatchSize::SmallInput)
+    });
+    circular.bench_function("circular (50 actors)", |b| {
+        b.iter_batched(|| make_chain(49), run_chain, BatchSize::SmallInput)
+    });
 }
 
-criterion_group!(benches, criterion_benchmark);
+criterion_group!(benches, spawn_bench, circular_bench);
 criterion_main!(benches);
