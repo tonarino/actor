@@ -26,8 +26,7 @@ use crate::{
     ActorError, Addr, BareContext, Capacity, Control, Priority, RegistryEntry, System,
     SystemHandle, SystemState,
 };
-use flume::RecvError;
-use futures_lite::FutureExt;
+use futures_util::{StreamExt, select_biased};
 use log::{debug, trace};
 use std::{any::type_name, fmt, future, thread};
 use tokio::runtime::LocalRuntime;
@@ -262,40 +261,26 @@ impl System {
             Message(M),
         }
 
-        loop {
-            // BIG TODO(Matej): is it okay to create a future every time and then drop it?
-            // Should we work with streams instead?
-            let receive_control = async {
-                match addr.control_rx.recv_async().await {
-                    Ok(control) => Received::Control(control),
-                    Err(RecvError::Disconnected) => {
-                        panic!("We keep control_tx alive through addr, should not happen.");
-                    },
-                }
-            };
-            let receive_high = async {
-                match addr.priority_rx.recv_async().await {
-                    Ok(msg) => Received::Message(msg),
-                    Err(RecvError::Disconnected) => {
-                        panic!("We keep priority_tx alive through addr, should not happen.");
-                    },
-                }
-            };
-            let receive_normal = async {
-                match addr.message_rx.recv_async().await {
-                    Ok(msg) => Received::Message(msg),
-                    Err(RecvError::Disconnected) => {
-                        panic!("We keep message_tx alive through addr, should not happen.");
-                    },
-                }
-            };
+        let mut control_stream = addr.control_rx.into_stream();
+        let mut high_prio_stream = addr.priority_rx.into_stream();
+        let mut normal_prio_stream = addr.message_rx.into_stream();
 
+        loop {
             // We have a nuanced requirements on combinator for the futures:
             // 1. If multiple futures in the combinator are ready, it should return the one with
             //    higher priority (control > high > normal);
             // 2. Otherwise it would wait for the first message to be ready and return that.
-            let receive_per_priority = receive_control.or(receive_high).or(receive_normal);
-            let received = receive_per_priority.await;
+            let received = select_biased!(
+                control = control_stream.next() => {
+                    Received::Control(control.expect("We keep control_tx alive through addr."))
+                },
+                high_prio = high_prio_stream.next() => {
+                    Received::Message(high_prio.expect("We keep priority_tx alive through addr."))
+                },
+                normal_prio = normal_prio_stream.next() => {
+                    Received::Message(normal_prio.expect("We keep message_tx alive through addr."))
+                },
+            );
 
             // Process the event. Returning ends actor loop, the normal operation is to fall through.
             match received {
