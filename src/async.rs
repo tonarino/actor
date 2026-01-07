@@ -1,26 +1,50 @@
 //! # Async Actors
 //!
-//! `tonari-actor` lets you freely combine sync (blocking) and `async` actors within one system.
+//! `tonari-actor` lets you freely combine sync (blocking) and async actors within one system.
+//! Available under the `async` crate feature (disabled by default).
 //!
 //! While sync actors implement the [`Actor`](crate::Actor) trait and are spawned using the
 //! [`System::spawn()`], [`System::prepare()`] and [`System::prepare_fn()`] family of methods,
-//! `async` actors implement [`AsyncActor`] and are spawned using [`System::spawn_async()`],
+//! async actors implement [`AsyncActor`] and are spawned using [`System::spawn_async()`],
 //! [`System::prepare_async()`] and [`System::prepare_async_fn()`].
 //!
-//! Sync and `async` actors share the same [`Addr`] and [`Recipient`](crate::Recipient) types.
+//! Sync and async actors share the same [`Addr`] and [`Recipient`](crate::Recipient) types.
 //!
-//! `async` actors share the same paradigm as sync actors: each one gets its own OS-level thread.
-//! More specifically a single-threaded async runtime is spawned for every `async` actor.
+//! Async actors share the same paradigm as sync actors: each one gets its own OS-level thread.
+//! More specifically a single-threaded async runtime is spawned for every async actor.
 //!
-//! `tonari-actor` currently uses the [`tokio`] ecosystem, more specifically its [`LocalRuntime`][^tokio].
+//! `tonari-actor` currently uses the [`tokio`][^tokio] ecosystem, more specifically its
+//! [`LocalRuntime`]. It allows spawning futures that are _not_ [`Send`], which means you
+//! can use [`Rc`](https://doc.rust-lang.org/std/rc/struct.Rc.html) and
+//! [`RefCell`](https://doc.rust-lang.org/std/cell/struct.RefCell.html) instead of
+//! [`Arc`](https://doc.rust-lang.org/std/sync/struct.Arc.html) and mutexes in your futures.
+//! It also allows the [`AsyncActor`] trait (and the implementors) to use the `async fn` syntax.
 //!
-//! TODO explain tokio feature flags and that downstreams may need to enable more.
+//! Tokio's [`LocalRuntime`] is currently [gated behind the `tokio_unstable` _Rust
+//! flag_](https://docs.rs/tokio/latest/tokio/index.html#unstable-features). Note that this isn't
+//! a cargo feature flag (that would go to `Cargo.toml`); it goes to `.cargo/config.toml` or
+//! `RUSTFLAGS`, which override the former. It needs to be specified in our leaf project/workspace
+//! (it doesn't propagate from `tonari-actor`). Stabilization of [`LocalRuntime`] is tracked in
+//! [tokio-rs/tokio#7558](https://github.com/tokio-rs/tokio/issues/7558).
 //!
-//! TODO lacking feature: block on
+//! With [`AsyncActor::handle()`] being an `async fn`, you gain an access to the wide async library
+//! ecosystem (currently those compatible with [`tokio`]), and you can employ concurrency (still
+//! within the single thread) when processing each message by using one of future combinators.
 //!
-//! [^tokio]: TODO explain that any runtime is sufficient (no dependency on tokio-specific features)
-//!     we only need to spawn _some_ runtime in the actor loop. tokio was just a pragmatic choice.
-//!     we could add support for alternative ones, even runtime-configurable.
+//! But the incoming messages are still processed sequentially (the actor framework won't start
+//! multiple concurrent [`AsyncActor::handle()`] futures of a given actor). If you want to process
+//! the _messages_ concurrently, spawn an async task and return from the `handle()` method.
+//!
+//! Async tasks can be spawned using [`tokio::task::spawn_local()`], or [`tokio::spawn()`] if the
+//! [`Send`] bound of the latter doesn't limit you.
+//!
+//! Note that an async equivalent of [`crate::SpawnBuilderWithAddress::run_and_block()`] is not
+//! currently implemented (contributions welcome).
+//!
+//! [^tokio]: on logical level, `tonari-actor` isn't tied to any specific async runtime (it doesn't
+//!     do any runtime-specific operations like I/O or timers), it just needs to spawn _some_ async
+//!     runtime in the actor loop. Tokio was just a pragmatic choice that many crates in the
+//!     ecosystem use. We could add support for alternative ones, even runtime-configurable.
 
 use crate::{
     ActorError, Addr, BareContext, Capacity, Control, Priority, RegistryEntry, System,
@@ -32,8 +56,8 @@ use std::{any::type_name, fmt, future, thread};
 use tokio::runtime::LocalRuntime;
 
 /// The actor trait - async variant.
-// Ad. the #[allow]: using `async` fn in a trait doesn't allow us to specify `Send` (or other)
-// bounds, but we don't really need any bounds, because TODO - we use single-threaded runtime
+// Ad. the #[allow]: using `async fn` in a trait doesn't allow us to specify `Send` (or other)
+// bounds, but we don't really need any bounds, because we use [`LocalRuntime`].
 #[allow(async_fn_in_trait)]
 pub trait AsyncActor {
     /// The expected type of a message to be received.
@@ -270,6 +294,9 @@ impl System {
             // 1. If multiple futures in the combinator are ready, it should return the one with
             //    higher priority (control > high > normal);
             // 2. Otherwise it would wait for the first message to be ready and return that.
+            //
+            // Tokio's `select` macro documentation contains nice survey of ecosystem alternatives:
+            // https://docs.rs/tokio/latest/tokio/macro.select.html#racing-futures
             let received = select_biased!(
                 control = control_stream.next() => {
                     Received::Control(control.expect("We keep control_tx alive through addr."))
