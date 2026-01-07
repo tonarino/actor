@@ -10,6 +10,10 @@ homepage = "https://github.com/tonarino/actor"
 readme = "README.md"
 keywords = ["actor", "threads"]
 
+[package.metadata.docs.rs]
+# Document with all features enabled.
+all-features = true
+
 [features]
 default = []
 async = ["flume/async", "dep:futures-util", "dep:tokio"]
