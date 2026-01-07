@@ -417,7 +417,7 @@ mod tests {
         let recorder_addr = system.spawn(recorder_actor).unwrap();
 
         let async_actor = AsyncTestActor { recorder: recorder_addr.recipient() };
-        let async_addr = system.spawn_async(async_actor).unwrap();
+        let async_addr = system.prepare_async(async_actor).with_capacity(10).spawn().unwrap();
 
         async_addr.send(TestMessage::DelayedTask).unwrap();
         async_addr.send(TestMessage::DelayedShutdown).unwrap();
