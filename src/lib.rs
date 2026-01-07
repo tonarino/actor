@@ -47,7 +47,8 @@
 //! # Publisher/subscriber Event System
 //!
 //! For cases where you want a global propagation of "events",
-//! you can implement the [`Event`] trait for your event type and then use [`Context::subscribe()`]
+//! you can implement the [`Event`] trait for your event type and then use
+//! [`BareContext::subscribe()`] (also accessible on [`Context`] through [`Deref`])
 //! and [`SystemHandle::publish()`] methods.
 //!
 //! Keep in mind that the event system has an additional requirement that the event type needs to be
@@ -812,14 +813,14 @@ impl SystemHandle {
         if err_count > 0 { Err(ActorError::ActorPanic) } else { Ok(()) }
     }
 
-    /// Subscribe given `recipient` to events of type `E`. See [`Context::subscribe()`].
+    /// Subscribe given `recipient` to events of type `E`. See [`BareContext::subscribe()`].
     pub fn subscribe_recipient<M: 'static, E: Event + Into<M>>(&self, recipient: Recipient<M>) {
         let mut event_subscribers = self.event_subscribers.write();
         event_subscribers.subscribe_recipient::<M, E>(recipient);
     }
 
     /// Subscribe given `recipient` to events of type `E` and send the last cached event to it.
-    /// See [`Context::subscribe_and_receive_latest()`].
+    /// See [`BareContext::subscribe_and_receive_latest()`].
     pub fn subscribe_and_receive_latest<M: 'static, E: Event + Into<M>>(
         &self,
         recipient: Recipient<M>,
