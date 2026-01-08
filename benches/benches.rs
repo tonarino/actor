@@ -52,7 +52,7 @@ fn make_chain(num_actors: usize) -> (System, Addr<u64>, Receiver<()>) {
 
 fn spawn_bench(c: &mut Criterion) {
     // The benchmark may fail at runtime if we i.e. spawn too many async runtimes. The failures
-    // look mysterious without the logs. Logging may be already ini by another bench.
+    // look mysterious without the logs. Logging may be already initialized by another bench.
     env_logger::try_init().ok();
 
     let mut spawn = c.benchmark_group("spawn");
@@ -81,7 +81,7 @@ fn run_chain((system, first, finish_receiver): (System, Addr<u64>, Receiver<()>)
 
 fn circular_bench(c: &mut Criterion) {
     // The benchmark may fail at runtime if we i.e. spawn too many async runtimes. The failures
-    // look mysterious without the logs. Logging may be already ini by another bench.
+    // look mysterious without the logs. Logging may be already initialized by another bench.
     env_logger::try_init().ok();
 
     let mut circular = c.benchmark_group("circular");

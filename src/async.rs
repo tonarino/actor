@@ -29,11 +29,12 @@
 //!
 //! With [`AsyncActor::handle()`] being an `async fn`, you gain an access to the wide async library
 //! ecosystem (currently those compatible with [`tokio`]), and you can employ concurrency (still
-//! within the single thread) when processing each message by using one of future combinators.
+//! within the single thread) when processing each message by using the various future combinators.
 //!
 //! But the incoming messages are still processed sequentially (the actor framework won't start
 //! multiple concurrent [`AsyncActor::handle()`] futures of a given actor). If you want to process
-//! the _messages_ concurrently, spawn an async task and return from the `handle()` method.
+//! the _messages_ concurrently, spawn an async task to handle the message and return from the
+//! `handle()` method immediately so new messages can arrive for processing.
 //!
 //! Async tasks can be spawned using [`tokio::task::spawn_local()`], or [`tokio::spawn()`] if the
 //! [`Send`] bound of the latter doesn't limit you.
@@ -41,10 +42,10 @@
 //! Note that an async equivalent of [`crate::SpawnBuilderWithAddress::run_and_block()`] is not
 //! currently implemented (contributions welcome).
 //!
-//! [^tokio]: on logical level, `tonari-actor` isn't tied to any specific async runtime (it doesn't
-//!     do any runtime-specific operations like I/O or timers), it just needs to spawn _some_ async
-//!     runtime in the actor loop. Tokio was just a pragmatic choice that many crates in the
-//!     ecosystem use. We could add support for alternative ones, even runtime-configurable.
+//! [^tokio]: on a logical level, `tonari-actor` isn't tied to any specific async runtime (it
+//!     doesn't do any runtime-specific operations like I/O or timers), it just needs to spawn
+//!     _some_ async runtime in the actor loop. Tokio was just a pragmatic choice that many crates
+//!     in the ecosystem use. We could add support for alternative ones, even runtime-configurable.
 
 use crate::{
     ActorError, Addr, BareContext, Capacity, Control, Priority, RegistryEntry, System,

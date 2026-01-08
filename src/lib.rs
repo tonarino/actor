@@ -76,6 +76,10 @@ use std::{
 pub mod r#async;
 pub mod timed;
 
+// Reexport the often-imported trait to top level, also to let downstream avoid typing r#async.
+#[cfg(feature = "async")]
+pub use r#async::AsyncActor;
+
 /// Capacity of the control channel (used to deliver [Control] messages).
 const CONTROL_CHANNEL_CAPACITY: usize = 5;
 
@@ -1356,7 +1360,7 @@ mod tests {
 
     #[test]
     fn message_priorities() {
-        // Logger might have been initialized by another test, so just try on best-effort basis.
+        // Logger might have been initialized by another test, so just try on a best-effort basis.
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace"))
             .try_init()
             .ok();

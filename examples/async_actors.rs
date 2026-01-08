@@ -2,7 +2,7 @@
 //! - the [`Crawler`] async actor concurrently fetches websites, emits chunks of their data to:
 //! - the [`Sorter`] async actor, which "sorts" the chunks from all websites by delaying each chunk
 //!   according to the value of its first character.
-//! - the [`Collector`] sync actor that prints chunks prefixed by the website as they come.
+//! - the [`Collector`] sync actor prints chunks prefixed by the website as they come.
 
 use anyhow::{Error, Result};
 use env_logger::Env;
@@ -14,9 +14,9 @@ use tokio::{
     task::JoinHandle,
     time::{Instant, sleep_until, timeout},
 };
-use tonari_actor::{Actor, BareContext, Context, Recipient, System, r#async::AsyncActor};
+use tonari_actor::{Actor, AsyncActor, BareContext, Context, Recipient, System};
 
-enum CollectorTask {
+enum CrawlerMessage {
     Crawl { hosts: Vec<String> },
     Finish,
 }
@@ -29,16 +29,18 @@ struct Crawler {
 
 impl AsyncActor for Crawler {
     type Error = Error;
-    type Message = CollectorTask;
+    type Message = CrawlerMessage;
 
     async fn handle(
         &mut self,
-        _context: &BareContext<CollectorTask>,
-        message: CollectorTask,
+        _context: &BareContext<CrawlerMessage>,
+        message: CrawlerMessage,
     ) -> Result<()> {
         match message {
-            CollectorTask::Crawl { hosts } => {
-                // Future combinators are sufficient for concurrent operation within a single actor message.
+            CrawlerMessage::Crawl { hosts } => {
+                // Future combinators are sufficient for concurrent operation within a single actor
+                // message. As we don't spawn an async task, we only start handling the _next_
+                // message once we fully process this current message though.
                 let stream = stream::iter(hosts);
                 let limit = None;
                 stream
@@ -46,7 +48,7 @@ impl AsyncActor for Crawler {
                     .try_for_each_concurrent(limit, |host| crawl_host(host, self.sorter.clone()))
                     .await?;
             },
-            CollectorTask::Finish => {
+            CrawlerMessage::Finish => {
                 log::debug!("Crawler finished, propagating to Sorter...");
                 self.sorter.send(SorterMessage::Finish)?;
             },
@@ -145,10 +147,10 @@ impl AsyncActor for Sorter {
                 self.pending_tasks.push(task);
             },
             SorterMessage::Finish => {
-                // Even though everything in concurrent, the message delivery order is still
-                // guaranteed: by the time we receive the `Finish` message it is guaranteed that
-                // we've received all `Chunk` messages sent prior to that, thus `self.tasks` is
-                // complete at this point.
+                // Even though everything is concurrent, the message delivery order is still
+                // guaranteed by the actor system. By the time we receive the `Finish` message,
+                // it is guaranteed that we won't receive any new `Chunk` messages sent prior to
+                // that, thus `self.tasks` is complete at this point.
                 let initial_task_count = self.pending_tasks.len();
                 self.pending_tasks.retain(|task| !task.is_finished());
                 let pending_task_count = self.pending_tasks.len();
@@ -200,8 +202,8 @@ fn main() -> Result<()> {
         "captive.apple.com".to_string(),
         "httpforever.com".to_string(),
     ];
-    crawler.send(CollectorTask::Crawl { hosts })?;
-    crawler.send(CollectorTask::Finish)?;
+    crawler.send(CrawlerMessage::Crawl { hosts })?;
+    crawler.send(CrawlerMessage::Finish)?;
 
     system.run()?;
     Ok(())
