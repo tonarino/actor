@@ -442,7 +442,7 @@ mod tests {
 
         let received = Arc::new(Mutex::new(Vec::new()));
         let recorder_actor = SyncRecorder { received: Arc::clone(&received) };
-        let recorder_addr = system.spawn(recorder_actor).unwrap();
+        let recorder_addr = system.prepare(recorder_actor).with_capacity(10).spawn().unwrap();
 
         let async_actor = AsyncTestActor { recorder: recorder_addr.recipient() };
         let async_addr = system.prepare_async(async_actor).with_capacity(10).spawn().unwrap();
