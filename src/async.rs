@@ -6,7 +6,7 @@
 //! While sync actors implement the [`Actor`](crate::Actor) trait and are spawned using the
 //! [`System::spawn()`], [`System::prepare()`] and [`System::prepare_fn()`] family of methods,
 //! async actors implement [`AsyncActor`] and are spawned using [`System::spawn_async()`],
-//! [`System::prepare_async()`] and [`System::prepare_async_fn()`].
+//! [`System::prepare_async()`] and [`System::prepare_async_factory()`].
 //!
 //! Sync and async actors share the same [`Addr`] and [`Recipient`](crate::Recipient) types.
 //!
@@ -185,7 +185,7 @@ impl System {
     /// created on its own thread instead of the calling thread.
     /// Returns an [`AsyncSpawnBuilderWithoutAddress`] which has to be further
     /// configured before spawning the actor.
-    pub fn prepare_async_fn<A, F>(
+    pub fn prepare_async_factory<A, F>(
         &mut self,
         factory: F,
     ) -> AsyncSpawnBuilderWithoutAddress<'_, A, F>
@@ -199,7 +199,7 @@ impl System {
     /// Spawn an [`AsyncActor`] in the system, returning its address when successful.
     /// This address is created by the system and uses a default capacity.
     /// If you need to customize the address see [`Self::prepare_async()`] or
-    /// [`Self::prepare_async_fn()`].
+    /// [`Self::prepare_async_factory()`].
     pub fn spawn_async<A>(&mut self, actor: A) -> Result<Addr<A::Message>, ActorError>
     where
         A: AsyncActor + Send + 'static,
