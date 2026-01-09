@@ -1253,15 +1253,17 @@ mod tests {
             }
         }
 
-        let mut system = System::new("main");
-
         // Allowable, as the struct will be created on the new thread.
-        let _ = system.prepare_fn(LocalActor::default).with_default_capacity().spawn().unwrap();
+        {
+            let mut system = System::new("send_constraints prepare_fn");
+            let _ = system.prepare_fn(LocalActor::default).with_default_capacity().spawn().unwrap();
+        }
 
         // Allowable, as the struct will be run on the current thread.
-        system.prepare(LocalActor::default()).with_default_capacity().run_and_block().unwrap();
-
-        system.shutdown().unwrap();
+        {
+            let mut system = System::new("send_constraints run_and_block");
+            system.prepare(LocalActor::default()).with_default_capacity().run_and_block().unwrap();
+        }
     }
 
     #[test]
