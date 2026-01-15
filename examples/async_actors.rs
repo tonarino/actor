@@ -24,7 +24,7 @@ enum CrawlerMessage {
 /// An actor that concurrently fetches pages using bare HTTP, and passes chunks of them to the
 /// next actor.
 struct Crawler {
-    sorter: Recipient<SorterMessage>,
+    sorter: Recipient<SorterCollectorMessage>,
 }
 
 impl AsyncActor for Crawler {
@@ -50,7 +50,7 @@ impl AsyncActor for Crawler {
             },
             CrawlerMessage::Finish => {
                 log::debug!("Crawler finished, propagating to Sorter...");
-                self.sorter.send(SorterMessage::Finish)?;
+                self.sorter.send(SorterCollectorMessage::Finish)?;
             },
         }
 
@@ -59,7 +59,7 @@ impl AsyncActor for Crawler {
 }
 
 /// Fetches a page from `host` and sends the response to `sorter`, in chunks.
-async fn crawl_host(host: String, sorter: Recipient<SorterMessage>) -> Result<()> {
+async fn crawl_host(host: String, sorter: Recipient<SorterCollectorMessage>) -> Result<()> {
     log::debug!("Connecting to {host}...");
     let mut stream = TcpStream::connect(format!("{}:80", host)).await?;
     log::debug!("Connected to {host}");
@@ -71,7 +71,7 @@ async fn crawl_host(host: String, sorter: Recipient<SorterMessage>) -> Result<()
         let mut buffer = vec![0u8; 100];
         let timeout_result = timeout(Duration::from_secs(3), stream.read(&mut buffer)).await;
         let Ok(read_result) = timeout_result else {
-            sorter.send(SorterMessage::Chunk(Chunk {
+            sorter.send(SorterCollectorMessage::Chunk(Chunk {
                 host: host.clone(),
                 text: format!("<timed out reading chunk {i}>"),
             }))?;
@@ -85,7 +85,7 @@ async fn crawl_host(host: String, sorter: Recipient<SorterMessage>) -> Result<()
 
         let text = String::from_utf8_lossy(&buffer[..read_bytes]).into_owned();
         let chunk = Chunk { host: host.clone(), text };
-        sorter.send(SorterMessage::Chunk(chunk))?;
+        sorter.send(SorterCollectorMessage::Chunk(chunk))?;
     }
 
     log::debug!("Closing connection to {host}.");
@@ -98,7 +98,8 @@ struct Chunk {
     text: String,
 }
 
-enum SorterMessage {
+/// Message type used by both [`Sorter`] and [`Collector`].
+enum SorterCollectorMessage {
     Chunk(Chunk),
     Finish,
 }
@@ -106,30 +107,30 @@ enum SorterMessage {
 /// An actor that sorts incoming web page chunks (mostly) alphabetically using a crude algorithm:
 /// it delays processing of each chunk depending on its first character value.
 struct Sorter {
-    collector: Recipient<Chunk>,
+    collector: Recipient<SorterCollectorMessage>,
     pending_tasks: Vec<JoinHandle<Result<(), Error>>>,
     first_message_reception: Option<Instant>,
 }
 
 impl Sorter {
-    fn new(collector: Recipient<Chunk>) -> Self {
+    fn new(collector: Recipient<SorterCollectorMessage>) -> Self {
         Self { collector, pending_tasks: vec![], first_message_reception: None }
     }
 }
 
 impl AsyncActor for Sorter {
     type Error = Error;
-    type Message = SorterMessage;
+    type Message = SorterCollectorMessage;
 
     const DEFAULT_CAPACITY_NORMAL: usize = 50;
 
     async fn handle(
         &mut self,
-        context: &BareContext<SorterMessage>,
-        message: SorterMessage,
+        _context: &BareContext<SorterCollectorMessage>,
+        message: SorterCollectorMessage,
     ) -> Result<()> {
         match message {
-            SorterMessage::Chunk(chunk) => {
+            SorterCollectorMessage::Chunk(chunk) => {
                 let first_message_reception =
                     *self.first_message_reception.get_or_insert(Instant::now());
 
@@ -140,13 +141,13 @@ impl AsyncActor for Sorter {
                     let first_char_value = first_char.map_or(0, u64::from);
                     let delay = Duration::from_millis(first_char_value * 20);
                     sleep_until(first_message_reception + delay).await;
-                    collector.send(chunk)?;
+                    collector.send(SorterCollectorMessage::Chunk(chunk))?;
 
                     Ok(())
                 });
                 self.pending_tasks.push(task);
             },
-            SorterMessage::Finish => {
+            SorterCollectorMessage::Finish => {
                 // Even though everything is concurrent, the message delivery order is still
                 // guaranteed by the actor system. By the time we receive the `Finish` message,
                 // it is guaranteed that we won't receive any new `Chunk` messages sent prior to
@@ -164,8 +165,10 @@ impl AsyncActor for Sorter {
                 // Propagate errors from the tasks:
                 results.into_iter().try_for_each(|result| result.map_err(Error::from).flatten())?;
 
-                log::debug!("Tasks finished, shutting down the actor system.");
-                context.system_handle.shutdown()?;
+                log::debug!(
+                    "Sorter tasks finished, telling collector to shut down the actor system."
+                );
+                self.collector.send(SorterCollectorMessage::Finish)?;
             },
         }
 
@@ -177,14 +180,21 @@ impl AsyncActor for Sorter {
 struct Collector;
 
 impl Actor for Collector {
-    type Context = Context<Chunk>;
+    type Context = Context<SorterCollectorMessage>;
     type Error = Error;
-    type Message = Chunk;
+    type Message = SorterCollectorMessage;
 
-    fn handle(&mut self, _context: &mut Context<Chunk>, message: Chunk) -> Result<()> {
-        let Chunk { host, text } = message;
-
-        println!("{host:>20}: {text:?}");
+    fn handle(&mut self, ctx: &mut Self::Context, message: SorterCollectorMessage) -> Result<()> {
+        match message {
+            SorterCollectorMessage::Chunk(chunk) => {
+                let Chunk { host, text } = chunk;
+                println!("{host:>20}: {text:?}");
+            },
+            SorterCollectorMessage::Finish => {
+                log::debug!("Collector shutting down the actor system.");
+                ctx.system_handle.shutdown()?;
+            },
+        }
         Ok(())
     }
 }
