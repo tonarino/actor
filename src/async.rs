@@ -23,7 +23,7 @@
 //! Tokio's [`LocalRuntime`] is currently [gated behind the `tokio_unstable` _Rust
 //! flag_](https://docs.rs/tokio/latest/tokio/index.html#unstable-features). Note that this isn't
 //! a cargo feature flag (that would go to `Cargo.toml`); it goes to `.cargo/config.toml` or
-//! `RUSTFLAGS`, which override the former. It needs to be specified in our leaf project/workspace
+//! `RUSTFLAGS`, which override the former. It needs to be specified in your leaf project/workspace
 //! (it doesn't propagate from `tonari-actor`). Stabilization of [`LocalRuntime`] is tracked in
 //! [tokio-rs/tokio#7558](https://github.com/tokio-rs/tokio/issues/7558).
 //!
@@ -87,7 +87,9 @@ pub trait AsyncActor {
         Ok(())
     }
 
-    /// The primary function of this trait, allowing an actor to handle incoming messages of a certain type.
+    /// The primary function of this trait, allowing an actor to handle incoming messages of
+    /// a certain type. Note that the actor system still calls this serially for each message even
+    /// for async actors. Delegate work to an async task if you want concurrent message processing.
     async fn handle(
         &mut self,
         context: &BareContext<Self::Message>,
@@ -394,7 +396,7 @@ mod tests {
 
         async fn stopped(&mut self, _: &BareContext<TestMessage>) -> Result<(), Error> {
             trace!("AsyncActor stopped hook");
-            self.recorder.send(TestMessage::Event("stopped"))?;
+            // Not sending a message to recorder, it is also being stopped right now.
             Ok(())
         }
     }
