@@ -48,8 +48,7 @@
 //!     in the ecosystem use. We could add support for alternative ones, even runtime-configurable.
 
 use crate::{
-    ActorError, Addr, BareContext, Capacity, Control, Priority, RegistryEntry, System,
-    SystemHandle, SystemState,
+    ActorError, Addr, BareContext, Capacity, Control, Priority, RegistryEntry, System, SystemHandle,
 };
 use futures_util::{StreamExt, select_biased};
 use log::{debug, trace};
@@ -219,11 +218,8 @@ impl System {
         // Hold the lock until the end of the function to prevent the race
         // condition between spawn and shutdown.
         let system_state_lock = self.handle.system_state.read();
-        match *system_state_lock {
-            SystemState::ShuttingDown | SystemState::Stopped => {
-                return Err(ActorError::SystemStopped { actor_name: A::name() });
-            },
-            SystemState::Running => {},
+        if !system_state_lock.is_running() {
+            return Err(ActorError::SystemStopped { actor_name: A::name() });
         }
 
         let system_handle = self.handle.clone();

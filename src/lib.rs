@@ -228,6 +228,16 @@ enum SystemState {
     Stopped,
 }
 
+impl SystemState {
+    /// Return `true` if the actor system is running (not shutting down, not stopped).
+    fn is_running(&self) -> bool {
+        match self {
+            SystemState::Running => true,
+            SystemState::ShuttingDown | SystemState::Stopped => false,
+        }
+    }
+}
+
 /// A marker trait for types which participate in the publish-subscribe system
 /// of the actor framework.
 pub trait Event: Clone + std::any::Any + Send + Sync {}
@@ -495,11 +505,8 @@ impl System {
         // Hold the lock until the end of the function to prevent the race
         // condition between spawn and shutdown.
         let system_state_lock = self.handle.system_state.read();
-        match *system_state_lock {
-            SystemState::ShuttingDown | SystemState::Stopped => {
-                return Err(ActorError::SystemStopped { actor_name: A::name() });
-            },
-            SystemState::Running => {},
+        if !system_state_lock.is_running() {
+            return Err(ActorError::SystemStopped { actor_name: A::name() });
         }
 
         let system_handle = self.handle.clone();
@@ -665,16 +672,11 @@ impl System {
         action: &str,
         error: impl std::fmt::Display,
     ) {
-        let is_running = match *system_handle.system_state.read() {
-            SystemState::Running => true,
-            SystemState::ShuttingDown | SystemState::Stopped => false,
-        };
-
         let system_name = &system_handle.name;
 
         // Note that the system may have transitioned from running to stopping (but not the other
         // way around) in the mean time. Slightly imprecise log and an extra no-op call is fine.
-        if is_running {
+        if system_handle.system_state.read().is_running() {
             error!(
                 "[{system_name}] {actor_name} {action} error: {error:#}. Shutting down the actor \
                  system."
@@ -715,22 +717,19 @@ impl SystemHandle {
         {
             let mut system_state_lock = self.system_state.write();
 
-            match *system_state_lock {
-                SystemState::ShuttingDown | SystemState::Stopped => {
-                    debug!(
-                        "[{}] thread {} called system.shutdown() but the system is already \
-                         shutting down or stopped.",
-                        self.name, current_thread_name,
-                    );
-                    return Ok(());
-                },
-                SystemState::Running => {
-                    info!(
-                        "[{}] thread {} shutting down the actor system.",
-                        self.name, current_thread_name,
-                    );
-                    *system_state_lock = SystemState::ShuttingDown;
-                },
+            if system_state_lock.is_running() {
+                info!(
+                    "[{}] thread {} shutting down the actor system.",
+                    self.name, current_thread_name,
+                );
+                *system_state_lock = SystemState::ShuttingDown;
+            } else {
+                trace!(
+                    "[{}] thread {} called system.shutdown() but the system is already shutting \
+                     down or stopped.",
+                    self.name, current_thread_name,
+                );
+                return Ok(());
             }
         }
 
