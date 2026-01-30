@@ -869,6 +869,10 @@ impl SystemHandle {
         Ok(())
     }
 
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     /// Return `true` if the actor system is running (not shutting down, not stopped).
     pub fn is_running(&self) -> bool {
         self.system_state.read().is_running()
