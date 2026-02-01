@@ -31,10 +31,13 @@
 //! ecosystem (currently those compatible with [`tokio`]), and you can employ concurrency (still
 //! within the single thread) when processing each message by using the various future combinators.
 //!
-//! But the incoming messages are still processed sequentially (the actor framework won't start
-//! multiple concurrent [`AsyncActor::handle()`] futures of a given actor). If you want to process
-//! the _messages_ concurrently, spawn an async task to handle the message and return from the
-//! `handle()` method immediately so new messages can arrive for processing.
+//! But the incoming messages are still processed sequentially. The actor event loop doesn't resume
+//! until the async fn handle() future resolves: it cannot start multiple concurrent
+//! [`AsyncActor::handle()`] futures also because `handle()` holds the `&mut self` reference.
+//!
+//! If you want to process the messages concurrently, spawn an async task to handle the message and
+//! return from the `handle()` method immediately so the new messages (including control messages to
+//! stop the actor) can arrive for processing.
 //!
 //! Async tasks can be spawned using [`tokio::task::spawn_local()`], or [`tokio::spawn()`] if the
 //! [`Send`] bound of the latter doesn't limit you.
@@ -89,7 +92,12 @@ pub trait AsyncActor {
 
     /// The primary function of this trait, allowing an actor to handle incoming messages of
     /// a certain type. Note that the actor system still calls this serially for each message even
-    /// for async actors. Delegate work to an async task if you want concurrent message processing.
+    /// for async actors; not even control messages (currently the request to stop the actor) are
+    /// processed while the future returned by `handle()` is still pending.
+    ///
+    /// Delegate work to an async task if you want to process messages and control events
+    /// concurrently. This is recommended especially if the `handle()` can take extended/arbitrary
+    /// time to fully resolve and you want the actor to stay responsive.
     async fn handle(
         &mut self,
         context: &BareContext<Self::Message>,
