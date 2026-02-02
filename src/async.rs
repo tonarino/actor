@@ -35,6 +35,10 @@
 //! until the async fn handle() future resolves: it cannot start multiple concurrent
 //! [`AsyncActor::handle()`] futures also because `handle()` holds the `&mut self` reference.
 //!
+//! It is usually desirable that `handle()` resolves relatively quickly so that control messages can
+//! be processed in a timely fashion and non-control messages do not accumulate and overflow their
+//! inboxes.
+//!
 //! If you want to process the messages concurrently, spawn an async task to handle the message and
 //! return from the `handle()` method immediately so the new messages (including control messages to
 //! stop the actor) can arrive for processing.
