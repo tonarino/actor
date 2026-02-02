@@ -53,6 +53,11 @@
 //!
 //! Keep in mind that the event system has an additional requirement that the event type needs to be
 //! [`Clone`] and is not intended to be high-throughput. Run the `pub_sub` benchmark to get an idea.
+//!
+//! # Async Actors
+//!
+//! Support of `async` actors exists under the `async` feature flag. See the documentation of the
+//! [`async`] module for more info.
 
 use flume::{Receiver, RecvError, Selector, Sender, select::SelectError};
 use log::*;
@@ -67,7 +72,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "async")]
+pub mod r#async;
 pub mod timed;
+
+// Reexport the often-imported trait to top level, also to let downstream avoid typing r#async.
+#[cfg(feature = "async")]
+pub use r#async::AsyncActor;
 
 /// Capacity of the control channel (used to deliver [Control] messages).
 const CONTROL_CHANNEL_CAPACITY: usize = 5;
@@ -217,6 +228,16 @@ enum SystemState {
     Stopped,
 }
 
+impl SystemState {
+    /// Return `true` if the actor system is running (not shutting down, not stopped).
+    fn is_running(&self) -> bool {
+        match self {
+            SystemState::Running => true,
+            SystemState::ShuttingDown | SystemState::Stopped => false,
+        }
+    }
+}
+
 /// A marker trait for types which participate in the publish-subscribe system
 /// of the actor framework.
 pub trait Event: Clone + std::any::Any + Send + Sync {}
@@ -300,8 +321,8 @@ impl<M> Deref for Context<M> {
     }
 }
 
-/// A [`Context`] without the [`Context::set_deadline()`] functionality. Used by [`timed`]
-/// actors. [`Context`] dereferences to this bare variant for `system_handle` and `myself`
+/// A [`Context`] without the [`Context::set_deadline()`] functionality. Used by [`timed`] and
+/// [`async`] actors. [`Context`] dereferences to this bare variant for `system_handle` and `myself`
 /// fields.
 pub struct BareContext<M> {
     pub system_handle: SystemHandle,
@@ -385,10 +406,10 @@ impl<'a, A: Actor<Context = Context<<A as Actor>::Message>>, F: FnOnce() -> A>
     }
 }
 
-#[must_use = "You must call .spawn() or .run_and_block() to run an actor"]
 /// After having configured the builder with an address
-/// it is possible to create and run the actor either on a new thread with `spawn()`
-/// or on the current thread with `run_and_block()`.
+/// it is possible to create and run the actor either on a new thread with [`Self::spawn()`]
+/// or on the current thread with [`Self::run_and_block()`].
+#[must_use = "You must call .spawn() or .run_and_block() to run the actor"]
 pub struct SpawnBuilderWithAddress<'a, A: Actor, F: FnOnce() -> A> {
     spawn_builder: SpawnBuilderWithoutAddress<'a, A, F>,
     addr: Addr<A::Message>,
@@ -445,7 +466,7 @@ impl System {
         SpawnBuilderWithoutAddress { system: self, factory: move || actor }
     }
 
-    /// Similar to `prepare`, but an actor factory is passed instead
+    /// Similar to [`Self::prepare()`], but an actor factory is passed instead
     /// of an [`Actor`] itself. This is used when an actor needs to be
     /// created on its own thread instead of the calling thread.
     /// Returns a [`SpawnBuilderWithoutAddress`] which has to be further
@@ -460,7 +481,7 @@ impl System {
 
     /// Spawn a normal [`Actor`] in the system, returning its address when successful.
     /// This address is created by the system and uses a default capacity.
-    /// If you need to customize the address see [`prepare`] or [`prepare_fn`] above.
+    /// If you need to customize the address see [`Self::prepare()`] or [`Self::prepare_fn()`].
     pub fn spawn<A>(&mut self, actor: A) -> Result<Addr<A::Message>, ActorError>
     where
         A: Actor<Context = Context<<A as Actor>::Message>> + Send + 'static,
@@ -484,11 +505,8 @@ impl System {
         // Hold the lock until the end of the function to prevent the race
         // condition between spawn and shutdown.
         let system_state_lock = self.handle.system_state.read();
-        match *system_state_lock {
-            SystemState::ShuttingDown | SystemState::Stopped => {
-                return Err(ActorError::SystemStopped { actor_name: A::name() });
-            },
-            SystemState::Running => {},
+        if !system_state_lock.is_running() {
+            return Err(ActorError::SystemStopped { actor_name: A::name() });
         }
 
         let system_handle = self.handle.clone();
@@ -501,7 +519,7 @@ impl System {
                 let mut actor = factory();
 
                 if let Err(error) = actor.started(&mut context) {
-                    Self::report_error_shutdown(&system_handle, A::name(), "started", error);
+                    Self::report_error_shutdown(&system_handle, A::name(), "started()", error);
                     return;
                 }
                 debug!("[{}] started actor: {}", system_handle.name, A::name());
@@ -551,7 +569,7 @@ impl System {
                 debug!("[{}] started actor: {}", system_handle.name, A::name());
                 Self::run_actor_select_loop(actor, addr, &mut context, system_handle);
             },
-            Err(error) => Self::report_error_shutdown(system_handle, A::name(), "started", error),
+            Err(error) => Self::report_error_shutdown(system_handle, A::name(), "started()", error),
         }
 
         // Wait for the system to shutdown before we exit, otherwise the process
@@ -565,6 +583,7 @@ impl System {
         Ok(())
     }
 
+    /// Keep logically in sync with [`Self::run_async_actor_select_loop()`].
     fn run_actor_select_loop<A>(
         mut actor: A,
         addr: Addr<A::Message>,
@@ -619,7 +638,7 @@ impl System {
                 Received::Control(Control::Stop) => {
                     if let Err(error) = actor.stopped(context) {
                         // FWIW this should always hit the "while shutting down" variant.
-                        Self::report_error_shutdown(system_handle, A::name(), "stopped", error);
+                        Self::report_error_shutdown(system_handle, A::name(), "stopped()", error);
                     }
                     debug!("[{}] stopped actor: {}", system_handle.name, A::name());
                     return;
@@ -627,7 +646,7 @@ impl System {
                 Received::Message(msg) => {
                     trace!("[{}] message received by {}", system_handle.name, A::name());
                     if let Err(error) = actor.handle(context, msg) {
-                        Self::report_error_shutdown(system_handle, A::name(), "handle", error);
+                        Self::report_error_shutdown(system_handle, A::name(), "handle()", error);
                         return;
                     }
                 },
@@ -637,7 +656,7 @@ impl System {
                         Self::report_error_shutdown(
                             system_handle,
                             A::name(),
-                            "deadline_passed",
+                            "deadline_passed()",
                             error,
                         );
                         return;
@@ -650,28 +669,23 @@ impl System {
     fn report_error_shutdown(
         system_handle: &SystemHandle,
         actor_name: &str,
-        method_name: &str,
+        action: &str,
         error: impl std::fmt::Display,
     ) {
-        let is_running = match *system_handle.system_state.read() {
-            SystemState::Running => true,
-            SystemState::ShuttingDown | SystemState::Stopped => false,
-        };
-
         let system_name = &system_handle.name;
 
         // Note that the system may have transitioned from running to stopping (but not the other
         // way around) in the mean time. Slightly imprecise log and an extra no-op call is fine.
-        if is_running {
+        if system_handle.system_state.read().is_running() {
             error!(
-                "[{system_name}] {actor_name} {method_name}() error: {error:#}. Shutting down the \
-                 actor system."
+                "[{system_name}] {actor_name} {action} error: {error:#}. Shutting down the actor \
+                 system."
             );
             let _ = system_handle.shutdown();
         } else {
             warn!(
-                "[{system_name}] {actor_name} {method_name}() error while shutting down: \
-                 {error:#}. Ignoring."
+                "[{system_name}] {actor_name} {action} error while shutting down: {error:#}. \
+                 Ignoring."
             );
         }
     }
@@ -703,22 +717,19 @@ impl SystemHandle {
         {
             let mut system_state_lock = self.system_state.write();
 
-            match *system_state_lock {
-                SystemState::ShuttingDown | SystemState::Stopped => {
-                    debug!(
-                        "[{}] thread {} called system.shutdown() but the system is already \
-                         shutting down or stopped.",
-                        self.name, current_thread_name,
-                    );
-                    return Ok(());
-                },
-                SystemState::Running => {
-                    info!(
-                        "[{}] thread {} shutting down the actor system.",
-                        self.name, current_thread_name,
-                    );
-                    *system_state_lock = SystemState::ShuttingDown;
-                },
+            if system_state_lock.is_running() {
+                info!(
+                    "[{}] thread {} shutting down the actor system.",
+                    self.name, current_thread_name,
+                );
+                *system_state_lock = SystemState::ShuttingDown;
+            } else {
+                trace!(
+                    "[{}] thread {} called system.shutdown() but the system is already shutting \
+                     down or stopped.",
+                    self.name, current_thread_name,
+                );
+                return Ok(());
             }
         }
 
@@ -858,8 +869,13 @@ impl SystemHandle {
         Ok(())
     }
 
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Return `true` if the actor system is running (not shutting down, not stopped).
     pub fn is_running(&self) -> bool {
-        *self.system_state.read() == SystemState::Running
+        self.system_state.read().is_running()
     }
 }
 
@@ -1241,15 +1257,17 @@ mod tests {
             }
         }
 
-        let mut system = System::new("main");
-
         // Allowable, as the struct will be created on the new thread.
-        let _ = system.prepare_fn(LocalActor::default).with_default_capacity().spawn().unwrap();
+        {
+            let mut system = System::new("send_constraints prepare_fn");
+            let _ = system.prepare_fn(LocalActor::default).with_default_capacity().spawn().unwrap();
+        }
 
         // Allowable, as the struct will be run on the current thread.
-        system.prepare(LocalActor::default()).with_default_capacity().run_and_block().unwrap();
-
-        system.shutdown().unwrap();
+        {
+            let mut system = System::new("send_constraints run_and_block");
+            system.prepare(LocalActor::default()).with_default_capacity().run_and_block().unwrap();
+        }
     }
 
     #[test]
@@ -1348,7 +1366,10 @@ mod tests {
 
     #[test]
     fn message_priorities() {
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace")).init();
+        // Logger might have been initialized by another test, so just try on a best-effort basis.
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace"))
+            .try_init()
+            .ok();
 
         struct PriorityActor {
             received: Arc<Mutex<Vec<usize>>>,
