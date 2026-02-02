@@ -13,6 +13,7 @@ keywords = ["actor", "threads"]
 [package.metadata.docs.rs]
 # Document with all features enabled.
 all-features = true
+rustc-args = ["--cfg", "tokio_unstable"]
 
 [features]
 default = []
